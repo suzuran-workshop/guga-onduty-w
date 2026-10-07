@@ -1,0 +1,12 @@
+{
+  "name": "class-manual-scanning",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm -r dev",
+    "dev:server": "pnpm --filter @class-duty/server dev",
+    "dev:web": "pnpm --filter @class-duty/web dev",
+    "build": "pnpm -r build",
+    "db:seed": "pnpm --filter @class-duty/server seed",
+    "db:migrate": "pnpm --filter @class-duty/server migrate"
+  }
+}
