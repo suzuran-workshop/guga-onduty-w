@@ -145,7 +145,7 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
     const slots = sched.timeSlotId ? await repos.duty.timeSlots.listByCampus(profile.campusId) : [];
     const slot = slots.find((s) => s.id === sched.timeSlotId);
 
-    const photos = await uploadPhotos(deps, CHECKIN_NS, photoFiles);
+    const photos = await uploadPhotos(deps, `${CHECKIN_NS}/${profile.campusId}`, photoFiles);
     try {
       const ck = await repos.duty.checkins.create({
         campusId: profile.campusId, scheduleId, dutyDate, teacherId: profile.userId,
@@ -180,7 +180,7 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
     if (!Array.isArray(items) || items.length === 0) throw ApiError.badRequest('巡查明细不能为空');
     // 照片（可选，按 item 索引分组：photo_<i> 多张）—— 简化：统一 photos[] 附加到含 photoKeys 占位的 item
     const photoFiles = form.getAll('photos').filter((f): f is File => f instanceof File && f.size > 0);
-    const photoKeys = photoFiles.length > 0 ? await uploadPhotos(deps, INSPECT_NS, photoFiles) : [];
+    const photoKeys = photoFiles.length > 0 ? await uploadPhotos(deps, `${INSPECT_NS}/${profile.campusId}`, photoFiles) : [];
     // 把照片按 item 声明的 photoIndex 分配（前端传 photoIndex；缺省全给第一条）
     if (photoKeys.length > 0) {
       const assigned = new Set<number>();

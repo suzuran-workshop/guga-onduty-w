@@ -216,6 +216,46 @@ describe('#9 申诉详情跨校区隔离', () => {
   });
 });
 
+describe('#5 /files 跨校区图片隔离（命名空间校区限定 + 代理鉴权）', () => {
+  it('objectKey 含校区段；跨校区读 404、本校区读 200、匿名 401、admin 200', async () => {
+    const admin = await h.loginAs('admin');
+    // admin(c1) 上传一张图
+    const form = new FormData();
+    form.set('class_id', seed.cls1.id);
+    form.set('score', '-1');
+    form.set('week', '2026-W41');
+    const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='), (c) => c.charCodeAt(0));
+    form.append('images', new File([png], 'a.png', { type: 'image/png' }));
+    const rec = await admin.req('POST', '/api/v1/records', { body: form, isForm: true });
+    expect(rec.status).toBe(201);
+    const objectKey = rec.json.data.images[0];
+    // 命名空间校区限定：records/<campusId>/files/...
+    expect(objectKey.split('/')[0]).toBe('records');
+    expect(objectKey.split('/')[1]).toBe(seed.c1.id);
+
+    // 匿名 → 401
+    const anon = await fetch(`${h.base}/files/${objectKey}`);
+    expect(anon.status).toBe(401);
+    // 跨校区 student2(c2) 读 c1 图 → 404（修复前 200 泄漏）
+    const s2 = await h.loginAs('student2');
+    const cross = await fetch(`${h.base}/files/${objectKey}`, { headers: { Cookie: s2.jar.header() } });
+    expect(cross.status).toBe(404);
+    // 本校区 student1(c1) → 200
+    const s1 = await h.loginAs('student1');
+    const same = await fetch(`${h.base}/files/${objectKey}`, { headers: { Cookie: s1.jar.header() } });
+    expect(same.status).toBe(200);
+    // admin → 200（跨校区放行）
+    const adm = await fetch(`${h.base}/files/${objectKey}`, { headers: { Cookie: admin.jar.header() } });
+    expect(adm.status).toBe(200);
+  });
+
+  it('伪造/遗留格式 key（无校区段）→ 非 admin fail-closed 404', async () => {
+    const s1 = await h.loginAs('student1');
+    const r = await fetch(`${h.base}/files/legacy-no-campus/x.png`, { headers: { Cookie: s1.jar.header() } });
+    expect(r.status).toBe(404); // 结构不符，非 admin 拒绝
+  });
+});
+
 describe('#2 删用户后其记录不静默消失（引用完整性）', () => {
   it('删除记录人后，列表仍显示该记录（recorderName 兜底），count 与 rows 一致', async () => {
     const admin = await h.loginAs('admin');

@@ -16,7 +16,7 @@ import { ok, created, ApiError, parsePagination } from '../http/respond.js';
 import { EventBus } from '../utils/event-bus.js';
 import type { RecordStatus } from '@class-duty/shared';
 
-const IMAGE_NS = 'records';
+const IMAGE_NS = 'records'; // 命名空间基名；上传拼成 records/<campusId>（REVIEW #5）
 const MAX_IMAGES = 9;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB/张
 const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
@@ -90,7 +90,7 @@ export function createRecordRoutes(deps: RouteDeps): Hono {
         throw ApiError.badRequest(`图片 ${file.name} 超过 ${MAX_IMAGE_BYTES / 1024 / 1024}MB 上限`);
       }
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const r = await storage.uploadFile(IMAGE_NS, file.name || 'image.jpg', bytes, file.type);
+      const r = await storage.uploadFile(`${IMAGE_NS}/${ownership.campusId}`, file.name || 'image.jpg', bytes, file.type);
       objectKeys.push(r.objectKey);
     }
 
