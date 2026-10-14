@@ -4,9 +4,12 @@
   "scripts": {
     "dev": "pnpm -r dev",
     "dev:server": "pnpm --filter @class-duty/server dev",
+    "dev:server:qw": "pnpm --filter @class-duty/server dev:qw",
     "dev:web": "pnpm --filter @class-duty/web dev",
     "build": "pnpm -r build",
     "db:seed": "pnpm --filter @class-duty/server seed",
-    "db:migrate": "pnpm --filter @class-duty/server migrate"
+    "db:generate": "pnpm --filter @class-duty/server db:generate",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck"
   }
 }

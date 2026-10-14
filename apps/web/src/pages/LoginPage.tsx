@@ -1,48 +1,93 @@
-import { useState } from 'react';
+/**
+ * 登录页 —— shadcn Card + cookie 登录。
+ * 迁移：旧 Fluent Card/Input/Button → shadcn；登录走 useAuth.login（SDK cookie）。
+ */
+import { useState, type FormEvent } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { useAuth } from '../hooks/useAuth';
-import { tokens, Input, Button, Card, Text } from '@fluentui/react-components';
-import { Building20Regular, Person20Regular, LockClosed20Regular } from '@fluentui/react-icons';
+import { toast } from 'sonner';
+import { Building2, Lock, User as UserIcon } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { useAuth } from '@/hooks/useAuth';
 
 export default function LoginPage() {
   const { t } = useTranslation();
   const { login } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault(); setError(''); setLoading(true);
-    try { await login({ username, password }); }
-    catch (err: any) { setError(err.message || 'Login failed'); }
-    finally { setLoading(false); }
-  };
+  const from = (location.state as { from?: { pathname: string } } | null)?.from?.pathname ?? '/';
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      await login(username, password);
+      navigate(from, { replace: true });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('auth.loginFailed'));
+    } finally {
+      setLoading(false);
+    }
+  }
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: tokens.colorNeutralBackground2 }}>
-      <Card style={{ width: 400, padding: 32 }}>
-        <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <div style={{ width: 56, height: 56, borderRadius: 12, background: tokens.colorBrandBackground, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>
-            <Building20Regular color="#fff" />
+    <div className="flex min-h-screen items-center justify-center bg-muted p-4">
+      <Card className="w-full max-w-sm">
+        <CardHeader className="text-center">
+          <div className="mx-auto mb-2 flex size-12 items-center justify-center rounded-full bg-primary/10">
+            <Building2 className="size-6 text-primary" />
           </div>
-          <Text size={600} weight="bold" style={{ color: tokens.colorNeutralForeground1, display: 'block' }}>{t('app.title')}</Text>
-          <Text size={200} style={{ color: tokens.colorNeutralForeground3, marginTop: 4 }}>{t('app.subtitle')}</Text>
-        </div>
-
-        <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: 16 }}><Input style={{ width: '100%' }} contentBefore={<Person20Regular />} placeholder={t('auth.usernamePlaceholder')} value={username} onChange={e => setUsername(e.currentTarget.value)} /></div>
-          <div style={{ marginBottom: 16 }}><Input style={{ width: '100%' }} type="password" contentBefore={<LockClosed20Regular />} placeholder={t('auth.passwordPlaceholder')} value={password} onChange={e => setPassword(e.currentTarget.value)} /></div>
-          {error && <Text size={200} style={{ color: tokens.colorPaletteRedForeground1, marginBottom: 8, display: 'block' }}>{error}</Text>}
-          <Button appearance="primary" type="submit" disabled={loading} style={{ width: '100%', marginTop: 8 }}>
-            {loading ? t('auth.loginLoading') : t('auth.login')}
-          </Button>
-        </form>
-
-        <div style={{ marginTop: 20, padding: 12, background: tokens.colorNeutralBackground2, borderRadius: 8 }}>
-          <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>{t('auth.testAccounts')}</Text>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}><Text size={100}>[A] admin [T] teacher1 [S] student1</Text></div>
-        </div>
+          <CardTitle className="text-xl">{t('app.title')}</CardTitle>
+          <CardDescription>{t('app.subtitle')}</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={onSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="username">{t('auth.username')}</Label>
+              <div className="relative">
+                <UserIcon className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  id="username"
+                  className="pl-9"
+                  placeholder={t('auth.usernamePlaceholder')}
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  autoComplete="username"
+                  required
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">{t('auth.password')}</Label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  id="password"
+                  type="password"
+                  className="pl-9"
+                  placeholder={t('auth.passwordPlaceholder')}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  required
+                />
+              </div>
+            </div>
+            <Button type="submit" className="w-full" disabled={loading}>
+              {loading ? t('auth.loginLoading') : t('auth.login')}
+            </Button>
+          </form>
+          <p className="mt-4 text-center text-xs text-muted-foreground">
+            {t('auth.testAccounts')} admin / teacher1 / student1
+          </p>
+        </CardContent>
       </Card>
     </div>
   );

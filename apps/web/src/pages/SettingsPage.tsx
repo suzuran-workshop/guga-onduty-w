@@ -1,57 +1,130 @@
-import { useState, useEffect } from 'react';
+/**
+ * 系统设置页 —— 申诉/自动通知开关 + 模板导入导出。
+ *
+ * 迁移要点（对照旧 Fluent 版）：
+ *  - Fluent Switch/Card/Button → shadcn Switch（checked + onCheckedChange）。
+ *  - GET /settings 返回 key-value map（Record<string,string>），非数组。
+ *  - PUT /settings 去掉硬编码 campus_id（后端从 profile 取），body {settings:[{key,value}]}，value 是 'true'/'false'。
+ *  - 模板导出：api.get('/templates/export') → JSON Blob 下载；导入：input[type=file] 读 JSON → POST /templates/import。
+ */
+import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { api } from '../api/client';
-import { tokens, Card, Text, Button, Switch } from '@fluentui/react-components';
-import { ArrowUpload20Regular, ArrowDownload20Regular } from '@fluentui/react-icons';
+import { toast } from 'sonner';
+import { Download, Upload } from 'lucide-react';
+import { Card, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { Separator } from '@/components/ui/separator';
+import { api } from '@/api/client';
+
+type SettingsMap = Record<string, string>;
 
 export default function SettingsPage() {
   const { t } = useTranslation();
-  const [settings, setSettings] = useState<Record<string, string>>({});
+  const [settings, setSettings] = useState<SettingsMap>({});
+  const fileRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => { api.get<{data:Record<string,string>}>('/settings?campus_id=1').then(r => setSettings(r.data)); }, []);
+  useEffect(() => {
+    api.get<SettingsMap>('/settings').then((r) => setSettings(r.data));
+  }, []);
 
-  const toggle = async (key: string, val: string) => {
-    const nv = val === 'true' ? 'false' : 'true';
-    await api.put('/settings', { campus_id: 1, settings: [{ key, value: nv }] });
-    setSettings(prev => ({ ...prev, [key]: nv }));
-  };
+  async function toggle(key: string) {
+    const nv = settings[key] === 'true' ? 'false' : 'true';
+    try {
+      await api.put('/settings', { settings: [{ key, value: nv }] });
+      setSettings((prev) => ({ ...prev, [key]: nv }));
+      toast.success(t('settings.savedOk'));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('common.failed'));
+    }
+  }
 
-  const handleExport = async () => {
-    const r = await api.get<{data:any}>('/templates/export?campus_id=1');
-    const blob = new Blob([JSON.stringify(r.data, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'templates.json'; a.click(); URL.revokeObjectURL(a.href);
-  };
+  async function handleExport() {
+    try {
+      const r = await api.get<{ name: string; tagIds: string[] }[]>('/templates/export');
+      const blob = new Blob([JSON.stringify(r.data, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'templates.json';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('common.failed'));
+    }
+  }
 
-  const handleImport = () => {
-    const input = document.createElement('input'); input.type = 'file'; input.accept = '.json';
-    input.onchange = async (e: any) => { const f = e.target.files?.[0]; if (!f) return; await api.post('/templates/import', { campus_id: 1, data: JSON.parse(await f.text()) }); };
-    input.click();
-  };
-
-  const row: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: `1px solid ${tokens.colorNeutralStroke2}` };
+  async function handleImport(file: File) {
+    try {
+      const data = JSON.parse(await file.text());
+      const r = await api.post<{ imported: number }>('/templates/import', { data });
+      toast.success(`${t('common.import')}: ${r.data.imported}`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('common.failed'));
+    }
+  }
 
   return (
-    <div>
-      <div style={{ marginBottom: 16 }}><Text size={600} weight="semibold">{t('settings.title')}</Text></div>
-      <Card style={{ maxWidth: 600 }}>
-        <Text size={400} weight="semibold" style={{ display: 'block', marginBottom: 16 }}>{t('settings.campusSettings')}</Text>
-        <div style={row}>
-          <div><div style={{ fontWeight: 500 }}>{t('settings.appealToggle')}</div><div style={{ fontSize: 13, color: tokens.colorNeutralForeground3 }}>{t('settings.appealDesc')}</div></div>
-          <Switch checked={settings.appeal_enabled === 'true'} onChange={() => toggle('appeal_enabled', settings.appeal_enabled || 'false')}
-            label={settings.appeal_enabled === 'true' ? t('settings.enabled') : t('settings.disabled')} />
-        </div>
-        <div style={row}>
-          <div><div style={{ fontWeight: 500 }}>{t('settings.notifyToggle')}</div><div style={{ fontSize: 13, color: tokens.colorNeutralForeground3 }}>{t('settings.notifyDesc')}</div></div>
-          <Switch checked={settings.auto_notify_teachers === 'true'} onChange={() => toggle('auto_notify_teachers', settings.auto_notify_teachers || 'false')}
-            label={settings.auto_notify_teachers === 'true' ? t('settings.enabled') : t('settings.disabled')} />
-        </div>
-        <div style={{ marginTop: 24 }}>
-          <Text weight="semibold" style={{ display: 'block', marginBottom: 12 }}>Template Import/Export</Text>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Button size="small" appearance="outline" icon={<ArrowDownload20Regular />} onClick={handleExport}>{t('settings.exportTemplates')}</Button>
-            <Button size="small" appearance="outline" icon={<ArrowUpload20Regular />} onClick={handleImport}>{t('settings.importTemplates')}</Button>
+    <div className="space-y-4">
+      <h1 className="text-2xl font-semibold">{t('settings.title')}</h1>
+
+      <Card className="max-w-2xl">
+        <CardContent className="pt-6">
+          <div className="mb-4 font-semibold">{t('settings.campusSettings')}</div>
+
+          <div className="flex items-center justify-between py-3">
+            <div className="space-y-0.5">
+              <Label className="text-base">{t('settings.appealToggle')}</Label>
+              <p className="text-sm text-muted-foreground">{t('settings.appealDesc')}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">
+                {settings.appeal_enabled === 'true' ? t('settings.enabled') : t('settings.disabled')}
+              </span>
+              <Switch checked={settings.appeal_enabled === 'true'} onCheckedChange={() => toggle('appeal_enabled')} />
+            </div>
           </div>
-        </div>
+
+          <Separator />
+
+          <div className="flex items-center justify-between py-3">
+            <div className="space-y-0.5">
+              <Label className="text-base">{t('settings.notifyToggle')}</Label>
+              <p className="text-sm text-muted-foreground">{t('settings.notifyDesc')}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">
+                {settings.auto_notify_teachers === 'true' ? t('settings.enabled') : t('settings.disabled')}
+              </span>
+              <Switch checked={settings.auto_notify_teachers === 'true'} onCheckedChange={() => toggle('auto_notify_teachers')} />
+            </div>
+          </div>
+
+          <Separator />
+
+          <div className="pt-5">
+            <div className="mb-3 font-semibold">{t('config.tabs.templates')}</div>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={handleExport}>
+                <Download className="size-4" />{t('settings.exportTemplates')}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
+                <Upload className="size-4" />{t('settings.importTemplates')}
+              </Button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".json,application/json"
+                hidden
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleImport(f);
+                  e.target.value = ''; // 允许重复选同一文件
+                }}
+              />
+            </div>
+          </div>
+        </CardContent>
       </Card>
     </div>
   );

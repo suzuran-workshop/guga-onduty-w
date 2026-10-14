@@ -1,94 +1,139 @@
-import { useState, useEffect } from 'react';
+/**
+ * 看板页 —— 今日统计 + 本周 Top5 + 最新记录。
+ * 迁移：Fluent Card/Table/Spinner → shadcn；数据走 useAsync + Promise.all。
+ */
 import { useTranslation } from 'react-i18next';
-import { api } from '../api/client';
-import { tokens, Card, Text, Button, Table, TableHeader, TableRow, TableHeaderCell, TableBody, TableCell, Spinner } from '@fluentui/react-components';
-import { ArrowClockwise20Regular, ArrowTrending20Regular, DocumentOnePage20Regular, Clock20Regular } from '@fluentui/react-icons';
-import type { DashboardStats, RecordWithDetails } from '@class-duty/shared';
+import { RefreshCw, TrendingUp, FileText, Clock } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { api } from '@/api/client';
+import { useAsync } from '@/hooks/useAsync';
+import type { DashboardStats, ClassRanking, RecordWithDetails } from '@class-duty/shared';
 
-const rankBadge = (r: number) => ({
-  display: 'inline-flex', alignItems: 'center', justifyContent: 'center' as const,
-  width: 24, height: 24, borderRadius: '50%', fontSize: 12, fontWeight: 700,
-  background: r === 1 ? '#DAA520' : r === 2 ? '#888' : r === 3 ? '#CD7F32' : tokens.colorNeutralBackground4,
-  color: r <= 3 ? '#fff' : tokens.colorNeutralForeground2,
-});
+interface DashData {
+  stats: DashboardStats;
+  ranking: ClassRanking[];
+  recent: RecordWithDetails[];
+}
+
+const RECORD_STATUS_LABEL: Record<string, string> = {
+  active: 'records.status.active',
+  revoked: 'records.status.revoked',
+  appealing: 'records.status.appealing',
+  appeal_approved: 'records.status.appeal_approved',
+};
 
 export default function DashboardPage() {
   const { t } = useTranslation();
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [records, setRecords] = useState<RecordWithDetails[]>([]);
-  const [rankings, setRankings] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const refresh = () => {
-    setLoading(true);
-    Promise.all([
-      api.get<{ data: DashboardStats }>('/statistics/dashboard'),
-      api.get<{ data: RecordWithDetails[] }>('/records?pageSize=10'),
-      api.get<{ data: any[] }>('/statistics/ranking'),
-    ]).then(([s, r, rk]) => { setStats(s.data); setRecords(r.data); setRankings(rk.data.slice(0, 5)); }).finally(() => setLoading(false));
-  };
-
-  useEffect(() => { refresh(); }, []);
-
-  if (loading && !stats) return <Spinner />;
+  const { data, loading, reload } = useAsync<DashData>(async () => {
+    const [stats, ranking, recent] = await Promise.all([
+      api.get<DashboardStats>('/statistics/dashboard'),
+      api.get<ClassRanking[]>('/statistics/ranking'),
+      api.get<RecordWithDetails[]>('/records', { pageSize: 10 }),
+    ]);
+    return { stats: stats.data, ranking: ranking.data, recent: recent.data };
+  }, []);
 
   return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <Text size={600} weight="semibold">{t('nav.dashboard')}</Text>
-        <Button size="small" appearance="subtle" icon={<ArrowClockwise20Regular />} onClick={refresh}>{t('common.refresh')}</Button>
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-semibold">{t('nav.dashboard')}</h1>
+        <Button variant="outline" size="sm" onClick={reload} disabled={loading}>
+          <RefreshCw className={loading ? 'size-4 animate-spin' : 'size-4'} />
+          {t('common.refresh')}
+        </Button>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 16, marginBottom: 24 }}>
-        <Card style={{ textAlign: 'center', padding: '20px 16px' }}>
-          <div style={{ fontSize: 28, fontWeight: 700 }}>{stats?.today_records ?? '-'}</div>
-          <div style={{ fontSize: 13, color: tokens.colorNeutralForeground3, marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}><DocumentOnePage20Regular /> {t('dashboard.todayRecords')}</div>
-        </Card>
-        <Card style={{ textAlign: 'center', padding: '20px 16px' }}>
-          <div style={{ fontSize: 28, fontWeight: 700, color: tokens.colorPaletteGreenForeground1 }}>{(stats?.today_positive ?? 0) > 0 ? '+' + stats?.today_positive : '0'}</div>
-          <div style={{ fontSize: 13, color: tokens.colorNeutralForeground3, marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}><ArrowTrending20Regular /> {t('dashboard.todayPositive')}</div>
-        </Card>
-        <Card style={{ textAlign: 'center', padding: '20px 16px' }}>
-          <div style={{ fontSize: 28, fontWeight: 700, color: tokens.colorPaletteRedForeground1 }}>{stats?.today_negative ?? 0}</div>
-          <div style={{ fontSize: 13, color: tokens.colorNeutralForeground3, marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}><ArrowTrending20Regular style={{ transform: 'scaleY(-1)' }} /> {t('dashboard.todayNegative')}</div>
-        </Card>
-        <Card style={{ textAlign: 'center', padding: '20px 16px' }}>
-          <div style={{ fontSize: 20, fontWeight: 700 }}>{stats?.week_top_class || '-'}</div>
-          <div style={{ fontSize: 13, color: tokens.colorNeutralForeground3, marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}><Clock20Regular /> {t('dashboard.weekBest')}</div>
-        </Card>
+      {/* 4 统计卡 */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard icon={FileText} label={t('dashboard.todayRecords')} value={data?.stats.todayRecords ?? 0} />
+        <StatCard icon={TrendingUp} label={t('dashboard.todayPositive')} value={data?.stats.todayPositive ?? 0} tone="success" />
+        <StatCard icon={TrendingUp} label={t('dashboard.todayNegative')} value={data?.stats.todayNegative ?? 0} tone="destructive" />
+        <StatCard icon={Clock} label={t('dashboard.weekBest')} value={data?.stats.weekTopClass ?? '—'} sub={data?.stats.weekTopScore != null ? `${data.stats.weekTopScore}` : undefined} />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* 本周 Top5 */}
         <Card>
-          <Text size={400} weight="semibold" style={{ display: 'block', marginBottom: 12 }}>{t('dashboard.weekTop5')}</Text>
-          {rankings.length === 0 ? <Text size={200}>{t('common.noData')}</Text> : (
-            <Table size="small">
-              <TableHeader><TableRow><TableHeaderCell>#</TableHeaderCell><TableHeaderCell>{t('records.class')}</TableHeaderCell><TableHeaderCell>{t('records.score')}</TableHeaderCell></TableRow></TableHeader>
+          <CardHeader>
+            <CardTitle className="text-base">{t('dashboard.weekTop5')}</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-12">#</TableHead>
+                  <TableHead>{t('stats.className')}</TableHead>
+                  <TableHead className="text-right">{t('stats.totalScore')}</TableHead>
+                </TableRow>
+              </TableHeader>
               <TableBody>
-                {rankings.map(r => (
-                  <TableRow key={r.class_id}><TableCell><span style={rankBadge(r.rank)}>{r.rank}</span></TableCell>
-                    <TableCell>{r.grade_name} {r.class_name}</TableCell>
-                    <TableCell style={{ color: r.total_score >= 0 ? tokens.colorPaletteGreenForeground1 : tokens.colorPaletteRedForeground1, fontWeight: 600 }}>{r.total_score >= 0 ? '+' : ''}{r.total_score}</TableCell>
-                  </TableRow>))}
+                {(data?.ranking ?? []).slice(0, 5).map((r) => (
+                  <TableRow key={r.classId}>
+                    <TableCell><RankBadge rank={r.rank} /></TableCell>
+                    <TableCell>{r.className}</TableCell>
+                    <TableCell className="text-right font-medium">{r.totalScore}</TableCell>
+                  </TableRow>
+                ))}
+                {data && data.ranking.length === 0 && (
+                  <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground">{t('common.noData')}</TableCell></TableRow>
+                )}
               </TableBody>
-            </Table>)}
+            </Table>
+          </CardContent>
         </Card>
 
+        {/* 最新记录 */}
         <Card>
-          <Text size={400} weight="semibold" style={{ display: 'block', marginBottom: 12 }}>{t('dashboard.recentRecords')}</Text>
-          {records.length === 0 ? <Text size={200}>{t('common.noData')}</Text> : (
-            <div style={{ maxHeight: 340, overflowY: 'auto' }}>
-              {records.map(r => (
-                <div key={r.id} style={{ padding: '10px 0', borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, fontSize: 14 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span><strong>{r.grade_name} {r.class_name}</strong><span style={{ marginLeft: 8 }}>{r.tag_name || '--'}</span></span>
-                    <span style={{ color: r.score && r.score >= 0 ? tokens.colorPaletteGreenForeground1 : tokens.colorPaletteRedForeground1, fontWeight: 600 }}>{r.score && r.score >= 0 ? '+' : ''}{r.score ?? '--'}</span>
-                  </div>
-                  <div style={{ fontSize: 12, color: tokens.colorNeutralForeground3, marginTop: 2 }}>{r.recorder_name} &middot; {r.recorded_at?.slice(0, 16)}</div>
-                </div>))}
-            </div>)}
+          <CardHeader>
+            <CardTitle className="text-base">{t('dashboard.recentRecords')}</CardTitle>
+          </CardHeader>
+          <CardContent className="max-h-80 space-y-2 overflow-y-auto">
+            {(data?.recent ?? []).map((r) => (
+              <div key={r.id} className="flex items-center justify-between rounded-md border p-2 text-sm">
+                <div className="min-w-0">
+                  <div className="truncate font-medium">{r.className} · {r.tagName ?? t('records.comment')}</div>
+                  <div className="text-xs text-muted-foreground">{r.recorderName} · {r.week}</div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={r.score != null && r.score < 0 ? 'text-destructive' : 'text-success'}>{r.score ?? 0}</span>
+                  <Badge variant={r.status === 'active' ? 'success' : r.status === 'revoked' ? 'secondary' : 'warning'}>
+                    {t(RECORD_STATUS_LABEL[r.status])}
+                  </Badge>
+                </div>
+              </div>
+            ))}
+            {data && data.recent.length === 0 && (
+              <div className="py-8 text-center text-sm text-muted-foreground">{t('common.noData')}</div>
+            )}
+          </CardContent>
         </Card>
       </div>
     </div>
   );
+}
+
+function StatCard({ icon: Icon, label, value, sub, tone }: {
+  icon: typeof FileText; label: string; value: string | number; sub?: string; tone?: 'success' | 'destructive';
+}) {
+  const toneClass = tone === 'success' ? 'text-success' : tone === 'destructive' ? 'text-destructive' : 'text-foreground';
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium text-muted-foreground">{label}</CardTitle>
+        <Icon className="size-4 text-muted-foreground" />
+      </CardHeader>
+      <CardContent>
+        <div className={`text-2xl font-bold ${toneClass}`}>{value}</div>
+        {sub && <div className="text-xs text-muted-foreground">{sub}</div>}
+      </CardContent>
+    </Card>
+  );
+}
+
+export function RankBadge({ rank }: { rank: number }) {
+  const medal = rank === 1 ? 'bg-yellow-400 text-yellow-950' : rank === 2 ? 'bg-gray-300 text-gray-800' : rank === 3 ? 'bg-amber-600 text-amber-50' : 'bg-muted text-muted-foreground';
+  return <span className={`inline-flex size-6 items-center justify-center rounded-full text-xs font-bold ${medal}`}>{rank}</span>;
 }
