@@ -21,6 +21,7 @@ import { mondayOf, dateKey, weekDates, startOfDay, parseDate } from '../duty/dat
 import { expandSchedules } from '../duty/expand.js';
 import { buildSwapOverlay, applySwapOverlay } from '../duty/swap-overlay.js';
 import type { DutyKind, SwapType, InspectionItem, Weekday } from '../duty/types.js';
+import { parseScheduleExcel, buildScheduleRows } from '../duty/excel-import.js';
 
 const CHECKIN_NS = 'duty-checkin';
 const INSPECT_NS = 'duty-inspect';
@@ -368,6 +369,83 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
     return ok(c, r);
   });
   app.delete('/schedules/:id', requireRole('admin'), async (c) => { await repos.duty.schedules.remove(c.req.param('id')); return ok(c, { deleted: true }); });
+
+  // ── Excel 排班导入（admin，叠加合并语义）──
+  // multipart：file=<xlsx>；缺失的区域/地点/时段自动创建；教师姓名同名匹配通讯录。
+  app.post('/schedules/import', requireRole('admin'), async (c) => {
+    const profile = getProfile(c);
+    const form = await c.req.formData();
+    const file = form.get('file');
+    if (!(file instanceof File)) throw ApiError.badRequest('缺少 file（xlsx）');
+    const buf = new Uint8Array(await file.arrayBuffer());
+
+    // 1. 纯解析（自主 SheetJS 实现，非照搬外部 PRD 的 Python openpyxl）
+    const { rows, warnings } = parseScheduleExcel(buf);
+    if (rows.length === 0) throw ApiError.badRequest('Excel 无可解析排班行：' + warnings.join('; '));
+
+    const campusId = resolveWriteCampusId(c, String(form.get('campus_id') || '') || null);
+
+    // 2. 区域/地点/时段：按名解析为 id，缺失自动创建（叠加合并）
+    const areas = await repos.duty.areas.listByCampus(campusId);
+    const areaByName = new Map(areas.map((a) => [a.name, a.id]));
+    const locs = await repos.duty.locations.listByCampus(campusId);
+    const locByName = new Map(locs.map((l) => [l.name, l.id]));
+    const slots = await repos.duty.timeSlots.listByCampus(campusId);
+    const slotByName = new Map(slots.map((s) => [s.name, s.id]));
+
+    async function ensureArea(name: string): Promise<string> {
+      const hit = areaByName.get(name);
+      if (hit) return hit;
+      const a = await repos.duty.areas.create({ campusId, name, sortOrder: areaByName.size + 1 });
+      areaByName.set(name, a.id);
+      return a.id;
+    }
+    async function ensureLocation(name: string, areaId: string): Promise<string> {
+      const hit = locByName.get(name);
+      if (hit) return hit;
+      const l = await repos.duty.locations.create({ campusId, areaId, name });
+      locByName.set(name, l.id);
+      return l.id;
+    }
+    async function ensureSlot(name: string, areaId: string): Promise<string | null> {
+      if (!name) return null;
+      const hit = slotByName.get(name);
+      if (hit) return hit;
+      const s = await repos.duty.timeSlots.create({ campusId, areaId, name, priority: slotByName.size });
+      slotByName.set(name, s.id);
+      return s.id;
+    }
+
+    // 3. 教师姓名 → userId（同名匹配通讯录）
+    const users = await repos.users.list(campusId);
+    const userByName = new Map(users.map((u) => [u.displayName, u.id]));
+
+    // 4. 预建所有出现的区域/地点/时段，再 buildScheduleRows（解析器同步）
+    for (const r of rows) {
+      const areaId = await ensureArea(r.areaName);
+      await ensureLocation(r.locationName, areaId);
+      if (r.timeSlotName) await ensureSlot(r.timeSlotName, areaId);
+    }
+    const scheduleRows = buildScheduleRows(
+      rows, campusId,
+      {
+        area: (n) => areaByName.get(n),
+        location: (n) => locByName.get(n),
+        timeSlot: (n) => slotByName.get(n),
+        teacher: (n) => userByName.get(n),
+      },
+      warnings,
+    );
+
+    // 5. 事务批量插入（叠加：不删旧排班）
+    const imported = await repos.duty.schedules.bulkCreate(scheduleRows);
+    return ok(c, {
+      parsed: rows.length,
+      imported,
+      skipped: rows.length - scheduleRows.length,
+      warnings: warnings.slice(0, 50),
+    });
+  });
 
   return app;
 }
