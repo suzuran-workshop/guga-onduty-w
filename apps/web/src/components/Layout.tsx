@@ -14,6 +14,7 @@ import { useTranslation } from 'react-i18next';
 import {
   LayoutDashboard, ClipboardCheck, BarChart3, FileText, Scale, Flag, Settings, SlidersHorizontal,
   Building2, Presentation, LogOut, ChevronsUpDown,
+  CalendarDays, Search, ArrowLeftRight, Settings2,
 } from 'lucide-react';
 import type { UserRole } from '@class-duty/shared';
 import { useAuth } from '@/hooks/useAuth';
@@ -43,6 +44,13 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/awards', i18nKey: 'nav.awards', icon: <Flag className="h-4 w-4" /> },
   { to: '/config', i18nKey: 'nav.config', icon: <Settings className="h-4 w-4" />, roles: ['admin'] },
   { to: '/settings', i18nKey: 'nav.settings', icon: <SlidersHorizontal className="h-4 w-4" />, roles: ['admin'] },
+  // ── 值班域（融合方案 DUTY-FUSION.md）──
+  { to: '/duty/schedule', i18nKey: 'nav.dutySchedule', icon: <CalendarDays className="h-4 w-4" /> },
+  { to: '/duty/checkin', i18nKey: 'nav.dutyCheckin', icon: <ClipboardCheck className="h-4 w-4" /> },
+  { to: '/duty/inspection', i18nKey: 'nav.dutyInspection', icon: <Search className="h-4 w-4" />, roles: ['admin', 'teacher'] },
+  { to: '/duty/swap', i18nKey: 'nav.dutySwap', icon: <ArrowLeftRight className="h-4 w-4" /> },
+  { to: '/duty/report', i18nKey: 'nav.dutyReport', icon: <BarChart3 className="h-4 w-4" /> },
+  { to: '/duty/config', i18nKey: 'nav.dutyConfig', icon: <Settings2 className="h-4 w-4" />, roles: ['admin'] },
 ];
 
 export function Layout({ children }: { children: ReactNode }) {

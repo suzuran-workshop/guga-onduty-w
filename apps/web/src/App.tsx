@@ -26,6 +26,13 @@ import AwardsPage from '@/pages/AwardsPage';
 import ConfigPage from '@/pages/ConfigPage';
 import SettingsPage from '@/pages/SettingsPage';
 import BigScreenPage from '@/pages/BigScreenPage';
+// 值班域（融合方案）
+import DutySchedulePage from '@/pages/DutySchedulePage';
+import DutyCheckinPage from '@/pages/DutyCheckinPage';
+import DutyInspectionPage from '@/pages/DutyInspectionPage';
+import DutySwapPage from '@/pages/DutySwapPage';
+import DutyReportPage from '@/pages/DutyReportPage';
+import DutyConfigPage from '@/pages/DutyConfigPage';
 
 /** 全屏加载占位（首屏 /me 探测中） */
 function FullScreenLoader() {
@@ -89,6 +96,27 @@ export default function App() {
                   element={
                     <RequireRole roles={['admin']}>
                       <SettingsPage />
+                    </RequireRole>
+                  }
+                />
+                {/* 值班域（融合方案 DUTY-FUSION.md）：巡查权限页用 RequireRole 兜底，config 仅 admin */}
+                <Route path="/duty/schedule" element={<DutySchedulePage />} />
+                <Route path="/duty/checkin" element={<DutyCheckinPage />} />
+                <Route
+                  path="/duty/inspection"
+                  element={
+                    <RequireRole roles={['admin', 'teacher']}>
+                      <DutyInspectionPage />
+                    </RequireRole>
+                  }
+                />
+                <Route path="/duty/swap" element={<DutySwapPage />} />
+                <Route path="/duty/report" element={<DutyReportPage />} />
+                <Route
+                  path="/duty/config"
+                  element={
+                    <RequireRole roles={['admin']}>
+                      <DutyConfigPage />
                     </RequireRole>
                   }
                 />

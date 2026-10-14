@@ -324,3 +324,7 @@ export interface RecordCreatedEvent {
   timestamp: number;
   campusId: string;
 }
+
+// ── 值班域 wire 契约（融合方案 DUTY-FUSION.md）─────────────────────────
+// 单一 import 路径：前端从 '@class-duty/shared' 一并取值周 + 值班类型。
+export * from './duty.js';
