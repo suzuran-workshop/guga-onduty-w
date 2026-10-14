@@ -55,9 +55,21 @@ export function buildApp(opts: BuildAppOptions): HomuraApp {
   // objectKey 为 uuid 前缀不可猜；<img> 同源自动带 cookie。修复旧代码图片死数据 bug。
   business.route('/', buildFileRoutes(storage));
 
+  // app-kit 的 createApp 对**每个**进入 onError 的错误都先 logger.error('unhandled', …) 再委托给
+  // 我们的 onError。但本项目大量用 ApiError 表达预期的 4xx（404/403/409），这些不该进 error 级监控
+  // （会淹没真实 500）。故传一个 logger 适配器：把 app-kit 那句通用 'unhandled' 降级为 warn，
+  // 真实未知错误仍由我们 onError 里的 logger.error（下方）以 error 级记录 —— 单一权威来源。
+  const kitLogger: Logger = {
+    ...logger,
+    error: (msg, fields) => {
+      if (msg === 'unhandled') logger.warn('handled-by-onError', fields);
+      else logger.error(msg, fields);
+    },
+  };
+
   return createApp({
     runtime: (cfg.get('runtime') as 'standalone' | 'qw-pages' | undefined) || 'auto',
-    logger,
+    logger: kitLogger,
     auth: {
       sessions: auth.sessions,
       sessionMiddleware: auth.sessionMiddleware,

@@ -52,8 +52,17 @@ export function parsePagination(c: Context): { page: number; pageSize: number } 
   return { page, pageSize };
 }
 
-/** 判断是否唯一约束冲突（drizzle/sqlite/pg 错误 → 409） */
+/**
+ * 判断是否唯一约束冲突（drizzle/sqlite/pg 错误 → 409）。
+ * ⚠ drizzle 把驱动错误包成 DrizzleQueryError（message 是 "Failed query…"），
+ *   真实的 UNIQUE/duplicate 信息在 cause.message 里，故必须遍历 cause 链，不能只看顶层 message。
+ */
 export function isUniqueViolation(e: unknown): boolean {
-  const msg = String((e as any)?.message ?? e);
-  return /UNIQUE constraint failed|duplicate key value|unique violation|23505/i.test(msg);
+  const re = /UNIQUE constraint failed|duplicate key value|unique violation|23505/i;
+  let cur: any = e;
+  for (let i = 0; cur && i < 6; i++) {
+    if (re.test(String(cur.message ?? ''))) return true;
+    cur = cur.cause;
+  }
+  return false;
 }
