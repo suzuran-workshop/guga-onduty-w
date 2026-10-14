@@ -36,6 +36,22 @@ export interface MatrixView {
 }
 
 /**
+ * 校区级单双周锚点（REVIEW #4）——从 settings.semester_start 读，缺省 null（回退排班自身 dateStart）。
+ *
+ * 为什么必须统一：矩阵展开、打卡守卫、到岗率三处都调 expand；若各自用不同锚点，
+ * 会出现「矩阵说今天你值班、打卡守卫说你不值班」的自相矛盾。故三处共用此锚点。
+ * 管理员在系统设置里配 `semester_start`（YYYY-MM-DD）即可让全校单双周对齐。
+ */
+export async function resolveParityAnchor(repos: Repos, campusId: string): Promise<Date | undefined> {
+  try {
+    const map = await repos.settings.getMap(campusId);
+    const s = map?.semester_start;
+    if (s && /^\d{4}-\d{2}-\d{2}$/.test(s)) return parseDate(s);
+  } catch { /* 无设置表或读取失败 → 回退排班 dateStart */ }
+  return undefined;
+}
+
+/**
  * 值班大表矩阵视图（核心）。
  * 组合：listForExpand(模板) → expandWeek(展开) → listApproved+buildSwapOverlay(叠加)
  *      → applySwapOverlay → listByCampusDate(打卡)+buildScheduleDoneChecker → buildMatrix。
@@ -58,8 +74,9 @@ export async function getWeekMatrix(deps: DutyServiceDeps, q: MatrixQuery): Prom
     dateTo: toKey,
   });
 
-  // 2. 展开成该周实例
-  const instances = expandWeek(templates, monday, { kind: q.kind, areaId: q.areaId });
+  // 2. 展开成该周实例（单双周锚点：校区级 semester_start，REVIEW #4）
+  const parityAnchor = await resolveParityAnchor(repos, q.campusId);
+  const instances = expandWeek(templates, monday, { kind: q.kind, areaId: q.areaId, parityAnchor });
 
   // 3. 调班叠加层（已批准）
   const approvedSwaps = await repos.duty.swaps.listApproved(q.campusId);
@@ -119,7 +136,7 @@ export async function getTodayTasks(deps: DutyServiceDeps, campusId: string, tea
   const dayKey = dateKey(day);
 
   const templates = await repos.duty.schedules.listForExpand({ campusId, dateFrom: dayKey, dateTo: dayKey });
-  const instances = expandSchedules(templates, { from: day, to: day });
+  const instances = expandSchedules(templates, { from: day, to: day, parityAnchor: await resolveParityAnchor(repos, campusId) });
 
   const approvedSwaps = await repos.duty.swaps.listApproved(campusId);
   const users = await repos.users.list(campusId);
@@ -178,7 +195,7 @@ export interface AttendanceStats {
 export async function getAttendance(deps: DutyServiceDeps, campusId: string, dateFrom: string, dateTo: string, kind?: DutyKind): Promise<AttendanceStats> {
   const { repos } = deps;
   const templates = await repos.duty.schedules.listForExpand({ campusId, kind, dateFrom, dateTo });
-  const instances = expandSchedules(templates, { from: parseDate(dateFrom), to: parseDate(dateTo), kind });
+  const instances = expandSchedules(templates, { from: parseDate(dateFrom), to: parseDate(dateTo), kind, parityAnchor: await resolveParityAnchor(repos, campusId) });
 
   const approvedSwaps = await repos.duty.swaps.listApproved(campusId);
   const users = await repos.users.list(campusId);

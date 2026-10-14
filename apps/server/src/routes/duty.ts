@@ -16,7 +16,7 @@ import { Hono } from 'hono';
 import type { RouteDeps } from './_deps.js';
 import { getProfile, requireRole, resolveCampusId, resolveWriteCampusId, assertEntityOwnership } from '../middleware/profile.js';
 import { ok, created, ApiError, parsePagination, isUniqueViolation } from '../http/respond.js';
-import { getWeekMatrix, getTodayTasks, getAttendance } from '../duty/service.js';
+import { getWeekMatrix, getTodayTasks, getAttendance, resolveParityAnchor } from '../duty/service.js';
 import { mondayOf, dateKey, weekDates, startOfDay, parseDate } from '../duty/date.js';
 import { expandSchedules } from '../duty/expand.js';
 import { buildSwapOverlay, applySwapOverlay } from '../duty/swap-overlay.js';
@@ -73,7 +73,9 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
     const sched = await repos.duty.schedules.findById(scheduleId);
     if (!sched) return { sched: null, assignees: null };
     const day = parseDate(date);
-    const insts = expandSchedules([sched], { from: day, to: day });
+    // 单双周锚点与矩阵展开同源（REVIEW #4）：否则会出现矩阵显示值班、守卫却判非值班的矛盾
+    const parityAnchor = await resolveParityAnchor(repos, campusId);
+    const insts = expandSchedules([sched], { from: day, to: day, parityAnchor });
     if (insts.length === 0) return { sched, assignees: null };
     const approved = await repos.duty.swaps.listApproved(campusId);
     const users = await repos.users.list(campusId);

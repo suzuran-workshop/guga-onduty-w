@@ -313,3 +313,40 @@ describe('大表矩阵（三态 pill）', () => {
     expect(sum.pending).toBe(1); // u2 未打卡
   });
 });
+
+
+describe('#4 单双周校区级锚点（REVIEW #4：消除排班各自 dateStart 导致的错位）', () => {
+  // 两条 odd 排班，dateStart 不同（相差一周）→ 无统一锚点时对「哪周是奇数周」判断相反
+  const sA: DutyScheduleRow = {
+    id: 'A', campusId: 'c1', kind: 'teaching', areaId: 'a1', timeSlotId: null, locationId: 'l1',
+    dateStart: '2026-09-01', dateEnd: '2026-09-30', weekday: 3, weekParity: 'odd',
+    countersign: 0, assigneeIds: ['u1'], note: null,
+  };
+  const sB: DutyScheduleRow = {
+    ...sA, id: 'B', dateStart: '2026-09-08', // 晚一周起
+  };
+  const range = { from: parseDate('2026-09-01'), to: parseDate('2026-09-13') };
+
+  it('无统一锚点：A 命中 9/2、B 命中 9/9 —— 各自为政（错位 bug）', () => {
+    const insts = expandSchedules([sA, sB], range);
+    const aDates = insts.filter((i) => i.scheduleId === 'A').map((i) => i.date);
+    const bDates = insts.filter((i) => i.scheduleId === 'B').map((i) => i.date);
+    expect(aDates).toEqual(['2026-09-02']); // A 以 9/1 为 week1(奇)
+    expect(bDates).toEqual(['2026-09-09']); // B 以 9/8 为 week1(奇) → 与 A 相反周
+  });
+
+  it('传校区级 parityAnchor：A、B 用同一把奇偶尺子对齐', () => {
+    const anchor = parseDate('2026-09-01'); // 校区统一学期起点
+    const insts = expandSchedules([sA, sB], { ...range, parityAnchor: anchor });
+    const aDates = insts.filter((i) => i.scheduleId === 'A').map((i) => i.date);
+    const bDates = insts.filter((i) => i.scheduleId === 'B').map((i) => i.date);
+    // 统一锚点后：week1=含9/1那周(奇)、week2=含9/8那周(偶)
+    expect(aDates).toEqual(['2026-09-02']); // A(odd) 命中 9/2(week1奇)
+    expect(bDates).toEqual([]);             // B(odd) 的 9/9 是 week2(偶) 不命中，且 9/2 早于其 dateStart
+  });
+
+  it('parityAnchor 与 semesterWeekNo 一致', () => {
+    expect(semesterWeekNo(parseDate('2026-09-02'), parseDate('2026-09-01'))).toBe(1);
+    expect(semesterWeekNo(parseDate('2026-09-09'), parseDate('2026-09-01'))).toBe(2);
+  });
+});

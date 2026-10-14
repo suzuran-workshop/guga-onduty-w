@@ -10,7 +10,7 @@
  * 匹配规则（对齐外部 PRD recordMatchesCell，但自主实现）：
  *  1. date ∈ [dateStart, dateEnd]
  *  2. weekdayOf(date) === schedule.weekday
- *  3. 单双周：semesterWeekNo(date, dateStart) 的奇偶匹配 weekParity
+ *  3. 单双周：semesterWeekNo(date, parityAnchor) 的奇偶匹配 weekParity（parityAnchor 缺省=排班 dateStart，REVIEW #4 建议传校区级统一锚点）
  *  4. 会签：assigneeIds 多人 → 一个实例多履职者（不拆成多实例）
  */
 import { DutyScheduleRow, DutyInstance, WEEKDAY_NAMES } from './types.js';
@@ -24,6 +24,13 @@ export interface ExpandOptions {
   kind?: 'teaching' | 'dutyWeek';
   /** 按区域过滤（缺省全部） */
   areaId?: string;
+  /**
+   * 单双周锚点（学期第 1 周的基准日）。REVIEW #4：
+   * 缺省时回退到「每条排班自己的 dateStart」——但两条 odd 排班若 dateStart 不同，
+   * 会对「哪周是奇数周」判断不一致，导致同张单周班表里排班错位（右人错周）。
+   * 传入校区级统一锚点（settings.semester_start）可消除该不一致。
+   */
+  parityAnchor?: Date;
 }
 
 /**
@@ -45,13 +52,15 @@ export function expandSchedules(schedules: DutyScheduleRow[], opts: ExpandOption
 
     const semStart = parseDate(s.dateStart);
     const semEnd = parseDate(s.dateEnd);
+    // 单双周锚点：优先用校区级统一锚点（REVIEW #4），缺省回退排班自身 dateStart
+    const parityAnchor = opts.parityAnchor ?? semStart;
 
     // 逐日扫描 [max(from,semStart), min(to,semEnd)]
     const cursor = new Date(Math.max(from.getTime(), startOfDay(semStart).getTime()));
     const upper = new Date(Math.min(to.getTime(), startOfDay(semEnd).getTime()));
 
     while (cursor.getTime() <= upper.getTime()) {
-      if (matchesCell(cursor, s, semStart)) {
+      if (matchesCell(cursor, s, parityAnchor)) {
         out.push(toInstance(s, cursor));
       }
       cursor.setDate(cursor.getDate() + 1);
