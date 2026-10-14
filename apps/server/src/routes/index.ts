@@ -1,5 +1,5 @@
 /**
- * API 路由装配 —— 把 15 个路由模块挂到 /api/v1/*，统一前置 requireProfile。
+ * API 路由装配 —— 把路由模块挂到 /api/v1/*，统一前置 requireProfile。
  *
  * 中间件链（app-kit createApp 已装好全局部分）：
  *   [createApp] requestId+日志 → healthz → sessionMiddleware(SDK, 设 c.auth) → authRoutes(SDK, /auth/*)
@@ -11,6 +11,10 @@
  *  - SDK 的登录路由 /auth/password/login 由 createApp 单独挂（不经 requireProfile，登录时无 profile）。
  *  - 所有 /api/v1/* 业务路由都要求已登录且有 profile（与旧代码 authMiddleware 覆盖一致）。
  *  - businessRoutes 挂在 '/'（createApp 内部），故此处每个模块都带完整 /api/v1/<res> 前缀。
+ *
+ * 域划分：
+ *  - 值周域（细粒度巡查）：records/appeals/awards/statistics/summary/tags/templates/... —— 现有，不动。
+ *  - 值班域（粗粒度巡查，融合方案 DUTY-FUSION.md）：/api/v1/duty/* —— 排班/打卡/巡查/调班/矩阵。
  */
 import { Hono } from 'hono';
 import type { RouteDeps } from './_deps.js';
@@ -31,6 +35,7 @@ import { createStatisticsRoutes } from './statistics.js';
 import { createAwardRoutes } from './awards.js';
 import { createSettingRoutes } from './settings.js';
 import { createSseRoutes } from './sse.js';
+import { createDutyRoutes } from './duty.js';
 
 /** 组装业务 API 路由（挂到 createApp 的 routes） */
 export function buildApiRoutes(deps: RouteDeps): Hono {
@@ -39,7 +44,7 @@ export function buildApiRoutes(deps: RouteDeps): Hono {
   // 统一前置：session claims → 业务档案
   api.use('*', requireProfile(deps.repos.users));
 
-  // 业务模块（全部 /api/v1/* 前缀）
+  // ── 值周域（细粒度巡查）──
   api.route('/api/v1/auth', createAuthRoutes(deps));
   api.route('/api/v1/campuses', createCampusRoutes(deps));
   api.route('/api/v1/grades', createGradeRoutes(deps));
@@ -55,6 +60,9 @@ export function buildApiRoutes(deps: RouteDeps): Hono {
   api.route('/api/v1/awards', createAwardRoutes(deps));
   api.route('/api/v1/settings', createSettingRoutes(deps));
   api.route('/api/v1/sse', createSseRoutes(deps));
+
+  // ── 值班域（粗粒度巡查，融合方案）──
+  api.route('/api/v1/duty', createDutyRoutes(deps));
 
   return api;
 }

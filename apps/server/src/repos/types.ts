@@ -69,9 +69,9 @@ export interface UsersRepo {
   /** 建号：auth register（user+password）+ 建 profile，事务/顺序保证 */
   create(input: {
     campusId: string; username: string; password: string;
-    displayName: string; role: UserRole; groupId?: string | null;
+    displayName: string; role: UserRole; groupId?: string | null; canInspect?: number;
   }): Promise<UserView>;
-  update(userId: string, input: { displayName: string; role: UserRole; groupId?: string | null }): Promise<UserView | null>;
+  update(userId: string, input: { displayName: string; role: UserRole; groupId?: string | null; canInspect?: number }): Promise<UserView | null>;
   remove(userId: string): Promise<void>;
   /** /auth/me：身份 + 档案 + 校区名 */
   findMe(userId: string): Promise<{ user: User; profile: UserProfile; campusName: string } | null>;

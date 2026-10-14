@@ -4,13 +4,13 @@
  * 身份模型（docs §2.2）：
  *  - auth SDK `users` 表 = 身份锚点（id uuid / username / nickname）。
  *  - auth SDK `passwords` 表 = scrypt 密码凭证（由 PasswordProvider 管，repo 不碰哈希）。
- *  - 业务 `userProfiles` 表 = role / campusId / displayName / groupId。
+ *  - 业务 `userProfiles` 表 = role / campusId / displayName / groupId / canInspect。
  *
  * create 流程：passwordProvider.register（建 users+passwords）→ 建 userProfiles。
  * 两步跨 SDK/业务边界无法同事务，故 profile 失败时 best-effort 清理孤儿 auth user
  * （照 PasswordProvider.register 对 user/password 的清理先例）。
  *
- * list/findMe 的 username 来自 auth users，displayName/role/campusId 来自 userProfiles，
+ * list/findMe 的 username 来自 auth users，displayName/role/campusId/canInspect 来自 userProfiles，
  * createdAt 用 auth users.createdAt（userProfiles 无该列）。
  */
 import { eq, and, asc, sql, inArray } from 'drizzle-orm';
@@ -34,6 +34,7 @@ function toView(r: any): UserView {
     groupId: r.groupId ?? null,
     groupName: r.groupName ?? null,
     campusName: r.campusName ?? '',
+    canInspect: num(r.canInspect),
     createdAt: num(r.createdAt),
   };
 }
@@ -52,6 +53,7 @@ export function createUsersRepo(ctx: DrizzleCtx, auth: UsersRepoAuthDeps): Users
     displayName: userProfiles.displayName,
     role: userProfiles.role,
     groupId: userProfiles.groupId,
+    canInspect: userProfiles.canInspect,
     groupName: dutyGroups.name,
     campusName: campuses.name,
     createdAt: users.createdAt,
@@ -86,13 +88,17 @@ export function createUsersRepo(ctx: DrizzleCtx, auth: UsersRepoAuthDeps): Users
           displayName: userProfiles.displayName,
           role: userProfiles.role,
           groupId: userProfiles.groupId,
+          canInspect: userProfiles.canInspect,
         })
         .from(userProfiles)
         .where(eq(userProfiles.userId, userId))
         .limit(1);
       const r = rows[0];
       return r
-        ? { userId: r.userId, campusId: r.campusId, displayName: r.displayName, role: r.role as UserRole, groupId: r.groupId ?? null }
+        ? {
+            userId: r.userId, campusId: r.campusId, displayName: r.displayName,
+            role: r.role as UserRole, groupId: r.groupId ?? null, canInspect: num(r.canInspect),
+          }
         : null;
     },
 
@@ -111,6 +117,7 @@ export function createUsersRepo(ctx: DrizzleCtx, auth: UsersRepoAuthDeps): Users
           displayName: input.displayName,
           role: input.role,
           groupId: input.groupId ?? null,
+          canInspect: input.canInspect ?? 0,
         }).run();
       } catch (e) {
         try { await auth.passwordProvider.deletePassword(localUser.id); } catch { /* 尽力清理 */ }
@@ -123,8 +130,10 @@ export function createUsersRepo(ctx: DrizzleCtx, auth: UsersRepoAuthDeps): Users
     },
 
     async update(userId, input): Promise<UserView | null> {
+      const patch: any = { displayName: input.displayName, role: input.role, groupId: input.groupId ?? null };
+      if (input.canInspect !== undefined) patch.canInspect = input.canInspect;
       await db.update(userProfiles)
-        .set({ displayName: input.displayName, role: input.role, groupId: input.groupId ?? null })
+        .set(patch)
         .where(eq(userProfiles.userId, userId))
         .run();
       // nickname 同步到 auth users（displayName 与 nickname 保持一致，登录页展示用）
@@ -148,7 +157,7 @@ export function createUsersRepo(ctx: DrizzleCtx, auth: UsersRepoAuthDeps): Users
           avatarUrl: users.avatarUrl, userCreatedAt: users.createdAt, userUpdatedAt: users.updatedAt,
           // profile
           campusId: userProfiles.campusId, displayName: userProfiles.displayName,
-          role: userProfiles.role, groupId: userProfiles.groupId,
+          role: userProfiles.role, groupId: userProfiles.groupId, canInspect: userProfiles.canInspect,
           campusName: campuses.name,
         })
         .from(users)
@@ -165,7 +174,7 @@ export function createUsersRepo(ctx: DrizzleCtx, auth: UsersRepoAuthDeps): Users
         },
         profile: {
           userId: r.id, campusId: r.campusId, displayName: r.displayName,
-          role: r.role as UserRole, groupId: r.groupId ?? null,
+          role: r.role as UserRole, groupId: r.groupId ?? null, canInspect: num(r.canInspect),
         },
         campusName: r.campusName ?? '',
       };
