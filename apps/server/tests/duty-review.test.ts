@@ -244,3 +244,33 @@ describe('#13: 巡查照片追加而非覆盖', () => {
     expect(r.json.data.items[0].status).toBe('present');
   });
 });
+
+
+describe('#12: 配置删除引用守卫（防悬挂外键）', () => {
+  it('删除仍有地点的区域 → 409', async () => {
+    const admin = await h.loginAs('admin');
+    const { areaId } = await mkSchedule(admin, seed.teacher.id, 1); // mkSchedule 建了区域+地点+排班
+    const r = await admin.req('DELETE', `/api/v1/duty/areas/${areaId}`);
+    expect(r.status).toBe(409); // 区域下仍有地点
+  });
+
+  it('删除仍有排班的地点 → 409', async () => {
+    const admin = await h.loginAs('admin');
+    const { locId } = await mkSchedule(admin, seed.teacher.id, 2);
+    const r = await admin.req('DELETE', `/api/v1/duty/locations/${locId}`);
+    expect(r.status).toBe(409); // 地点仍被排班引用
+  });
+
+  it('删除空区域（无下级）→ 200', async () => {
+    const admin = await h.loginAs('admin');
+    const a = await admin.req('POST', '/api/v1/duty/areas', { body: { name: `空区${Date.now()}` } });
+    const r = await admin.req('DELETE', `/api/v1/duty/areas/${a.json.data.id}`);
+    expect(r.status).toBe(200);
+  });
+
+  it('删除不存在的区域 → 404（归属校验先于引用守卫）', async () => {
+    const admin = await h.loginAs('admin');
+    const r = await admin.req('DELETE', '/api/v1/duty/areas/nonexistent-uuid');
+    expect(r.status).toBe(404);
+  });
+});

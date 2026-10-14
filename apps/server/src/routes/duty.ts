@@ -186,7 +186,7 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
       const assigned = new Set<number>();
       items.forEach((it, idx) => {
         const want = (it as any).photoIndex;
-        if (typeof want === 'number' && photoKeys[want]) { it.photoKeys = [photoKeys[want]]; assigned.add(want); }
+        if (typeof want === 'number' && photoKeys[want]) { it.photoKeys = [...(it.photoKeys ?? []), photoKeys[want]]; assigned.add(want); }
       });
       const rest = photoKeys.filter((_, i) => !assigned.has(i));
       if (rest.length > 0 && items[0]) items[0].photoKeys = [...(items[0].photoKeys ?? []), ...rest];
@@ -317,8 +317,14 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
     return ok(c, r);
   });
   app.delete('/areas/:id', requireRole('admin'), async (c) => {
-    assertEntityOwnership(c, await repos.duty.areas.findById(c.req.param('id')), '区域');
-    await repos.duty.areas.remove(c.req.param('id')); return ok(c, { deleted: true });
+    const id = c.req.param('id');
+    const area = assertEntityOwnership(c, await repos.duty.areas.findById(id), '区域');
+    // 引用守卫（REVIEW #12）：区域下仍有地点或排班则拒删，防悬挂外键（homura 不用 DB FK，完整性靠应用层）
+    const locs = await repos.duty.locations.listByCampus(area.campusId, id);
+    if (locs.length > 0) throw ApiError.conflict(`该区域下仍有 ${locs.length} 个地点，无法删除`);
+    const scheds = await repos.duty.schedules.listForExpand({ campusId: area.campusId, areaId: id });
+    if (scheds.length > 0) throw ApiError.conflict(`该区域下仍有 ${scheds.length} 条排班，无法删除`);
+    await repos.duty.areas.remove(id); return ok(c, { deleted: true });
   });
 
   // 地点
@@ -339,8 +345,12 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
     return ok(c, r);
   });
   app.delete('/locations/:id', requireRole('admin'), async (c) => {
-    assertEntityOwnership(c, await repos.duty.locations.findById(c.req.param('id')), '地点');
-    await repos.duty.locations.remove(c.req.param('id')); return ok(c, { deleted: true });
+    const id = c.req.param('id');
+    const loc = assertEntityOwnership(c, await repos.duty.locations.findById(id), '地点');
+    // 引用守卫：仍有排班指向该地点则拒删
+    const scheds = (await repos.duty.schedules.listForExpand({ campusId: loc.campusId })).filter((x) => x.locationId === id);
+    if (scheds.length > 0) throw ApiError.conflict(`该地点仍有 ${scheds.length} 条排班，无法删除`);
+    await repos.duty.locations.remove(id); return ok(c, { deleted: true });
   });
 
   // 时段
@@ -363,8 +373,12 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
     return ok(c, r);
   });
   app.delete('/time-slots/:id', requireRole('admin'), async (c) => {
-    assertEntityOwnership(c, await repos.duty.timeSlots.findById(c.req.param('id')), '时段');
-    await repos.duty.timeSlots.remove(c.req.param('id')); return ok(c, { deleted: true });
+    const id = c.req.param('id');
+    const slot = assertEntityOwnership(c, await repos.duty.timeSlots.findById(id), '时段');
+    // 引用守卫：仍有排班指向该时段则拒删
+    const scheds = (await repos.duty.schedules.listForExpand({ campusId: slot.campusId })).filter((x) => x.timeSlotId === id);
+    if (scheds.length > 0) throw ApiError.conflict(`该时段仍有 ${scheds.length} 条排班，无法删除`);
+    await repos.duty.timeSlots.remove(id); return ok(c, { deleted: true });
   });
 
   // ══════════ 排班模板（admin）══════════
