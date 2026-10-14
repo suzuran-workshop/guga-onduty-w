@@ -44,6 +44,7 @@ export function createAppealsRepo(ctx: DrizzleCtx): AppealsRepo {
     riStatus: records.status,
     riClassName: classes.name,
     riTagName: tags.name,
+    riCampusId: records.campusId,
   };
 
   const joined = () =>
@@ -80,6 +81,7 @@ export function createAppealsRepo(ctx: DrizzleCtx): AppealsRepo {
       teacherName: r.teacherName ?? '',
       reviewerName: r.reviewerName ?? null,
       recordInfo,
+      campusId: r.riCampusId ?? null,
     };
   }
 

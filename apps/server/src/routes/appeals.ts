@@ -43,9 +43,11 @@ export function createAppealRoutes(deps: RouteDeps): Hono {
     const profile = getProfile(c);
     const appeal = await repos.appeals.findById(c.req.param('id'));
     if (!appeal) throw ApiError.notFound('申诉不存在');
+    // REVIEW #9：非 admin 强制本校区隔离（旧代码靠「id 只能来自已隔离列表」兜底，现直接校验 campusId）
+    if (profile.role !== 'admin' && appeal.campusId !== profile.campusId) {
+      throw ApiError.notFound('申诉不存在'); // 不泄露跨校区申诉的存在性
+    }
     // teacher 只能看自己发起的申诉；admin 放行；student 无申诉语义，拒绝。
-    // 注：AppealWithDetails 不含 campusId，校区隔离的真实边界在 list 端点（已按 resolveCampusId 过滤），
-    // 详情端点靠「id 只能来自已隔离的列表」+ 角色校验兜底。
     if (profile.role === 'teacher') {
       if (appeal.teacherId !== profile.userId) throw ApiError.notFound('申诉不存在');
     } else if (profile.role !== 'admin') {

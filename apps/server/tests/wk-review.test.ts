@@ -149,6 +149,73 @@ describe('#8 配置删除引用守卫（防孤儿子行，与值班域一致）'
   });
 });
 
+describe('#7 settings key 白名单 + 值校验', () => {
+  it('admin 写未知 key → 400（修复前任意 key 落库）', async () => {
+    const admin = await h.loginAs('admin');
+    const r = await admin.req('PUT', '/api/v1/settings', { body: { settings: [{ key: 'evil_key', value: '1' }] } });
+    expect(r.status).toBe(400);
+  });
+  it('admin 写非法 semester_start → 400（该键驱动全校单双周锚点）', async () => {
+    const admin = await h.loginAs('admin');
+    const r = await admin.req('PUT', '/api/v1/settings', { body: { settings: [{ key: 'semester_start', value: 'not-a-date' }] } });
+    expect(r.status).toBe(400);
+  });
+  it('admin 写合法 semester_start → 200', async () => {
+    const admin = await h.loginAs('admin');
+    const r = await admin.req('PUT', '/api/v1/settings', { body: { settings: [{ key: 'semester_start', value: '2026-09-01' }] } });
+    expect(r.status).toBe(200);
+  });
+  it('admin 写非法 bool 值 → 400', async () => {
+    const admin = await h.loginAs('admin');
+    const r = await admin.req('PUT', '/api/v1/settings', { body: { settings: [{ key: 'appeal_enabled', value: 'maybe' }] } });
+    expect(r.status).toBe(400);
+  });
+  it('合法白名单键仍正常（不误伤）', async () => {
+    const admin = await h.loginAs('admin');
+    const r = await admin.req('PUT', '/api/v1/settings', { body: { settings: [{ key: 'appeal_enabled', value: 'true' }, { key: 'auto_notify_teachers', value: 'false' }] } });
+    expect(r.status).toBe(200);
+  });
+});
+
+describe('#9 申诉详情跨校区隔离', () => {
+  // seedStandard 无 c2 teacher，本 suite 内建一个（c2 教师才能对 c2 记录申诉）
+  let c2teacherUser: string;
+  beforeAll(async () => {
+    const admin = await h.loginAs('admin');
+    const u = await admin.req('POST', '/api/v1/users', { body: { username: `c2t-${Date.now()}`, password: 'pw123456', display_name: '二校区老师', role: 'teacher', campus_id: seed.c2.id } });
+    c2teacherUser = u.json.data.username;
+  });
+
+  it('teacher 不能看他校区申诉详情（404，不泄露存在性）', async () => {
+    const admin = await h.loginAs('admin');
+    const s2 = await h.loginAs('student2'); // c2 student
+    const rec = await s2.req('POST', '/api/v1/records', { body: recordForm(seed.clsC2.id, '-2'), isForm: true });
+    const c2t = await h.loginAs(c2teacherUser, 'pw123456');
+    await c2t.req('POST', `/api/v1/records/${rec.json.data.id}/appeal`, { body: { reason: 'r' } });
+    const list = await admin.req('GET', '/api/v1/appeals', { query: { pageSize: 100 } });
+    const c2appeal = list.json.data.find((a: any) => a.recordId === rec.json.data.id);
+    expect(c2appeal).toBeTruthy();
+    expect(c2appeal.campusId).toBe(seed.c2.id); // 投影带出 campusId
+    // c1 的 teacher1 试图读 c2 申诉详情 → 404
+    const t1 = await h.loginAs('teacher1');
+    const r = await t1.req('GET', `/api/v1/appeals/${c2appeal.id}`);
+    expect(r.status).toBe(404);
+  });
+
+  it('admin 可跨校区读申诉详情（隔离不误伤 admin）', async () => {
+    const admin = await h.loginAs('admin');
+    const s2 = await h.loginAs('student2');
+    const rec = await s2.req('POST', '/api/v1/records', { body: recordForm(seed.clsC2.id, '-3'), isForm: true });
+    const c2t = await h.loginAs(c2teacherUser, 'pw123456');
+    await c2t.req('POST', `/api/v1/records/${rec.json.data.id}/appeal`, { body: { reason: 'r' } });
+    const list = await admin.req('GET', '/api/v1/appeals', { query: { pageSize: 100 } });
+    const c2appeal = list.json.data.find((a: any) => a.recordId === rec.json.data.id);
+    const r = await admin.req('GET', `/api/v1/appeals/${c2appeal.id}`);
+    expect(r.status).toBe(200);
+    expect(r.json.data.campusId).toBe(seed.c2.id);
+  });
+});
+
 describe('#2 删用户后其记录不静默消失（引用完整性）', () => {
   it('删除记录人后，列表仍显示该记录（recorderName 兜底），count 与 rows 一致', async () => {
     const admin = await h.loginAs('admin');

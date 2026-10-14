@@ -163,6 +163,8 @@ export interface AppealWithDetails extends Appeal {
   teacherName: string;
   reviewerName: string | null;
   recordInfo: AppealRecordInfo | null;
+  /** 关联记录的校区（详情端点做跨校区隔离用，REVIEW #9；来自 join records.campusId） */
+  campusId: string | null;
 }
 
 export interface RecordLog {
