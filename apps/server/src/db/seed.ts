@@ -70,7 +70,7 @@ export async function seed(): Promise<void> {
 
   // ── 用户（auth register + profile）──
   const admin = await R.users.create({ campusId: c1.id, username: 'admin', password: PW, displayName: '系统管理员', role: 'admin' });
-  const teacher1 = await R.users.create({ campusId: c1.id, username: 'teacher1', password: PW, displayName: '李老师', role: 'teacher' });
+  const teacher1 = await R.users.create({ campusId: c1.id, username: 'teacher1', password: PW, displayName: '李老师', role: 'teacher', canInspect: 1 });
   await R.users.create({ campusId: c1.id, username: 'teacher2', password: PW, displayName: '王老师', role: 'teacher' });
   const student1 = await R.users.create({ campusId: c1.id, username: 'student1', password: PW, displayName: '值周生A', role: 'student' });
   const student2 = await R.users.create({ campusId: c1.id, username: 'student2', password: PW, displayName: '值周生B', role: 'student' });
@@ -122,6 +122,81 @@ export async function seed(): Promise<void> {
     campusId: c1.id, name: '课间操检查模板',
     tagIds: [c1Created['两操整齐'], c1Created['课间追逐打闹']].filter(Boolean),
   });
+
+  // ── 值班域（融合方案 DUTY-FUSION.md §2/§D6）──────────────────────────
+  // 主人核心洞察：「值周只是一种更详细的值班，都是巡查业务」——
+  // 教师执勤(kind=teaching) 与 值周生巡查(kind=dutyWeek) 排进同一张 duty_schedules，同表同引擎，
+  // 在值班大表矩阵里统一呈现。这正是两个功能集团「无缝融合」的技术落点。
+  const SEM_START = '2026-09-01';
+  const SEM_END = '2027-01-31';
+
+  // 区域（年级组维度）+ 地点（执勤岗位）
+  const areaPrimary = await R.duty.areas.create({ campusId: c1.id, name: '小学部', sortOrder: 1 });
+  const gateLoc = await R.duty.locations.create({ campusId: c1.id, areaId: areaPrimary.id, name: '校门口' });
+  const bldgLoc = await R.duty.locations.create({ campusId: c1.id, areaId: areaPrimary.id, name: '教学楼A一层' });
+  const yardLoc = await R.duty.locations.create({ campusId: c1.id, areaId: areaPrimary.id, name: '操场' });
+  // 时段
+  const allDay = await R.duty.timeSlots.create({ campusId: c1.id, areaId: areaPrimary.id, name: '全天值日', priority: 0 });
+  const morning = await R.duty.timeSlots.create({ campusId: c1.id, areaId: areaPrimary.id, name: '早读', startMinute: 480, endMinute: 510, priority: 1 });
+
+  // 教师执勤排班（粗粒度巡查）：teacher1 周一/周三 守校门口，teacher2 周二 守教学楼
+  const teacher2 = (await R.users.list(c1.id, 'teacher')).find((u) => u.username === 'teacher2')!;
+  await R.duty.schedules.create({
+    campusId: c1.id, kind: 'teaching', areaId: areaPrimary.id, locationId: gateLoc.id, timeSlotId: allDay.id,
+    dateStart: SEM_START, dateEnd: SEM_END, weekday: 1, weekParity: 'everyweek', countersign: 0,
+    assigneeIds: [teacher1.id], note: '周一校门口执勤',
+  });
+  await R.duty.schedules.create({
+    campusId: c1.id, kind: 'teaching', areaId: areaPrimary.id, locationId: gateLoc.id, timeSlotId: allDay.id,
+    dateStart: SEM_START, dateEnd: SEM_END, weekday: 3, weekParity: 'everyweek', countersign: 0,
+    assigneeIds: [teacher1.id], note: '周三校门口执勤',
+  });
+  await R.duty.schedules.create({
+    campusId: c1.id, kind: 'teaching', areaId: areaPrimary.id, locationId: bldgLoc.id, timeSlotId: allDay.id,
+    dateStart: SEM_START, dateEnd: SEM_END, weekday: 2, weekParity: 'everyweek', countersign: 0,
+    assigneeIds: [teacher2.id], note: '周二教学楼执勤',
+  });
+  // 会签示例：周五校门口两人同岗（外部 PRD 的会签模式）
+  await R.duty.schedules.create({
+    campusId: c1.id, kind: 'teaching', areaId: areaPrimary.id, locationId: gateLoc.id, timeSlotId: allDay.id,
+    dateStart: SEM_START, dateEnd: SEM_END, weekday: 5, weekParity: 'everyweek', countersign: 1,
+    assigneeIds: [teacher1.id, teacher2.id], note: '周五校门口双人执勤',
+  });
+
+  // 值周生巡查排班（细粒度巡查）：student1/student2 周一~周五 分片巡查——与教师执勤同表，仅 kind 不同
+  await R.duty.schedules.create({
+    campusId: c1.id, kind: 'dutyWeek', areaId: areaPrimary.id, locationId: bldgLoc.id, timeSlotId: morning.id,
+    dateStart: SEM_START, dateEnd: SEM_END, weekday: 1, weekParity: 'odd', countersign: 0,
+    assigneeIds: [student1.id], note: '值周生A 单周一巡查教学楼',
+  });
+  await R.duty.schedules.create({
+    campusId: c1.id, kind: 'dutyWeek', areaId: areaPrimary.id, locationId: yardLoc.id, timeSlotId: morning.id,
+    dateStart: SEM_START, dateEnd: SEM_END, weekday: 1, weekParity: 'even', countersign: 0,
+    assigneeIds: [student2.id], note: '值周生B 双周一巡查操场',
+  });
+  await R.duty.schedules.create({
+    campusId: c1.id, kind: 'dutyWeek', areaId: areaPrimary.id, locationId: gateLoc.id, timeSlotId: allDay.id,
+    dateStart: SEM_START, dateEnd: SEM_END, weekday: 4, weekParity: 'everyweek', countersign: 0,
+    assigneeIds: [student1.id, student2.id], note: '周四值周生联合巡查校门口',
+  });
+
+  // c2 也建一套（多校区隔离演示）：teacher3 执勤 + student3 值周
+  const teacher3 = (await R.users.list(c2.id, 'teacher')).find((u) => u.username === 'teacher3')!;
+  const areaC2 = await R.duty.areas.create({ campusId: c2.id, name: '中学部', sortOrder: 1 });
+  const gateC2 = await R.duty.locations.create({ campusId: c2.id, areaId: areaC2.id, name: '南门' });
+  const slotC2 = await R.duty.timeSlots.create({ campusId: c2.id, areaId: areaC2.id, name: '全天值日', priority: 0 });
+  await R.duty.schedules.create({
+    campusId: c2.id, kind: 'teaching', areaId: areaC2.id, locationId: gateC2.id, timeSlotId: slotC2.id,
+    dateStart: SEM_START, dateEnd: SEM_END, weekday: 3, weekParity: 'everyweek', countersign: 0,
+    assigneeIds: [teacher3.id], note: '二校区周三南门执勤',
+  });
+  await R.duty.schedules.create({
+    campusId: c2.id, kind: 'dutyWeek', areaId: areaC2.id, locationId: gateC2.id, timeSlotId: slotC2.id,
+    dateStart: SEM_START, dateEnd: SEM_END, weekday: 2, weekParity: 'everyweek', countersign: 0,
+    assigneeIds: [student3.id], note: '二校区值周生C 周二巡查',
+  });
+
+  logger.info('Duty fusion seed inserted: teaching + dutyWeek 排班同表（融合方案落地）');
 
   // ── 设置 ──
   await R.settings.upsertMany(c1.id, [
