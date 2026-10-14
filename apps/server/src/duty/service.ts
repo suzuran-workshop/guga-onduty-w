@@ -206,6 +206,16 @@ export async function getAttendance(deps: DutyServiceDeps, campusId: string, dat
   const checkins = await repos.duty.checkins.listByCampusDate(campusId, dateFrom, dateTo);
   const doneChecker = buildScheduleDoneChecker(checkins);
 
+  // 改良 A（融合度量）：值周生（dutyWeek）的「履职」= 当日提交过 records（细粒度巡查），
+  // 而非 dutyCheckins（那是教师执勤的到岗打卡）。故建一个「记录人 × 日历日」活动索引：
+  // dutyWeek 排班的到岗判定走它，teaching 排班仍走 doneChecker（打卡）。
+  // 这样统一到岗率同时度量教师执勤与值周巡查——「值周是更详细的值班」在度量层兑现。
+  const fromEpoch = startOfDay(parseDate(dateFrom)).getTime();
+  const toEpoch = startOfDay(parseDate(dateTo)).getTime() + 86400000; // 含 dateTo 当天
+  const activity = await repos.records.listRecorderActivity(campusId, fromEpoch, toEpoch);
+  const dutyWeekDone = new Set<string>(); // `${recorderId}|${dateKey}`
+  for (const a of activity) dutyWeekDone.add(`${a.recorderId}|${dateKey(new Date(a.recordedAt))}`);
+
   // 应到/实到按人聚合
   const schedCount = new Map<string, number>();
   const doneCount = new Map<string, number>();
@@ -215,7 +225,11 @@ export async function getAttendance(deps: DutyServiceDeps, campusId: string, dat
     for (const uid of assignees) {
       scheduled++;
       schedCount.set(uid, (schedCount.get(uid) ?? 0) + 1);
-      if (doneChecker.isCheckedIn(inst.scheduleId, inst.date, uid)) {
+      // dutyWeek → 当日提交过记录即到岗；teaching → 打卡即到岗
+      const onDuty = inst.kind === 'dutyWeek'
+        ? dutyWeekDone.has(`${uid}|${inst.date}`)
+        : doneChecker.isCheckedIn(inst.scheduleId, inst.date, uid);
+      if (onDuty) {
         checkedIn++;
         doneCount.set(uid, (doneCount.get(uid) ?? 0) + 1);
       }

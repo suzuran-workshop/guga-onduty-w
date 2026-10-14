@@ -116,6 +116,12 @@ export interface RecordsRepo {
   revoke(id: string, operatorId: string, reason: string): Promise<void>;
   /** 导出行（CSV） */
   listForExport(campusId: string, startWeek?: string, endWeek?: string): Promise<RecordWithDetails[]>;
+  /**
+   * 记录人活动（改良 A：到岗率桥接值周履职）——返回 [fromEpoch,toEpoch) 内本校区所有记录的
+   * (recorderId, recordedAt) 精简投影，供 duty service 计算「某值周生某日是否提交过记录」= 到岗。
+   * 只取两列（不拉完整行），校内规模高效。
+   */
+  listRecorderActivity(campusId: string, fromEpoch: number, toEpoch: number): Promise<{ recorderId: string; recordedAt: number }[]>;
 }
 
 // ── 申诉 ────────────────────────────────────────────────────────────

@@ -7,7 +7,7 @@
  *  - images 存 storage objectKey 数组（JSON 列，drizzle 自动编解码）。
  *  - 分页 total 用子查询 count（复刻旧逻辑，但参数化）。
  */
-import { desc, eq, and, sql, inArray } from 'drizzle-orm';
+import { desc, eq, and, sql, inArray, gte, lt } from 'drizzle-orm';
 import type { RecordWithDetails, RecordStatus } from '@class-duty/shared';
 import type { RecordsRepo, Paged } from '../types.js';
 import { DrizzleCtx, whereAll, eqIf, paginate, num } from './_base.js';
@@ -103,6 +103,15 @@ export function createRecordsRepo(ctx: DrizzleCtx): RecordsRepo {
     async findByIdWithDetails(id): Promise<RecordWithDetails | null> {
       const rows = await joined().where(eq(records.id, id)).limit(1);
       return rows[0] ? toDetails(rows[0]) : null;
+    },
+
+    async listRecorderActivity(campusId, fromEpoch, toEpoch): Promise<{ recorderId: string; recordedAt: number }[]> {
+      // 改良 A：只取 recorderId + recordedAt 两列（到岗率桥接用，不需完整行）
+      const rows = await db
+        .select({ recorderId: records.recorderId, recordedAt: records.recordedAt })
+        .from(records)
+        .where(and(eq(records.campusId, campusId), gte(records.recordedAt, fromEpoch), lt(records.recordedAt, toEpoch)));
+      return rows.map((r: any) => ({ recorderId: r.recorderId, recordedAt: num(r.recordedAt) }));
     },
 
     async create(input): Promise<RecordWithDetails> {

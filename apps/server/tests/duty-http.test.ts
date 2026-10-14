@@ -404,3 +404,85 @@ describe('排班校验', () => {
     expect(r.status).toBe(400);
   });
 });
+
+
+describe('改良 A：到岗率桥接值周履职（融合度量）', () => {
+  // 「值周是更详细的值班」在度量层兑现：dutyWeek 排班的值周生，当日提交 records = 到岗。
+  // ⚠ records.recordedAt = Date.now()（服务端真实当前时刻），桥接按提交日历日匹配，
+  //   故排班必须设在「今天」、记录也在「今天」提交，二者日历日才对齐（这正是真实语义：
+  //   值周生在其值班当天巡查并提交记录）。测试用动态今天，不写死日期。
+  const today = new Date();
+  const todayWeekday = today.getDay();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+  it('dutyWeek 排班的值周生今日提交记录后，到岗率从 0 变正（不再只认 dutyCheckins）', async () => {
+    const admin = await h.loginAs('admin');
+    const u = `fu${Date.now() % 99999}`;
+    const area = await admin.req('POST', '/api/v1/duty/areas', { body: { name: `融合区${u}` } });
+    const users = await admin.req('GET', '/api/v1/users');
+    const student = users.json.data.find((x: any) => x.username === 'student1');
+    // dutyWeek 排班设在「今天」（weekday=今天，区间覆盖今天）
+    const sch = await admin.req('POST', '/api/v1/duty/schedules', {
+      body: {
+        kind: 'dutyWeek', area_id: area.json.data.id,
+        date_start: todayKey, date_end: todayKey, weekday: todayWeekday, week_parity: 'everyweek',
+        countersign: false, assignee_ids: [student.id],
+      },
+    });
+    expect(sch.status).toBe(201);
+
+    // 提交记录前：dutyWeek 到岗率应为 0（student1 今天还没提交任何 records）
+    const before = await admin.req('GET', '/api/v1/duty/attendance', {
+      query: { date_from: todayKey, date_to: todayKey, kind: 'dutyWeek' },
+    });
+    expect(before.json.data.scheduled).toBe(1);
+    expect(before.json.data.checkedIn).toBe(0); // 未履职
+    expect(before.json.data.rate).toBe(0);
+
+    // student1 今天提交一条值周记录（recordedAt=Date.now()=今天 → 与排班同日 → 到岗）
+    const stu = await h.loginAs('student1');
+    const form = new FormData();
+    form.set('class_id', seed.cls1.id);
+    form.set('score', '-1');
+    form.set('week', '2026-W41');
+    await stu.req('POST', '/api/v1/records', { body: form, isForm: true });
+
+    // 提交记录后：dutyWeek 到岗率应变正（值周履职被计入）—— 融合度量兑现
+    const after = await admin.req('GET', '/api/v1/duty/attendance', {
+      query: { date_from: todayKey, date_to: todayKey, kind: 'dutyWeek' },
+    });
+    expect(after.json.data.scheduled).toBe(1);
+    expect(after.json.data.checkedIn).toBe(1); // ★ 提交记录 = 到岗
+    expect(after.json.data.rate).toBe(1);
+    const me = after.json.data.byTeacher.find((b: any) => b.teacherId === student.id);
+    expect(me?.checkedIn).toBe(1);
+  });
+
+  it('teaching 排班仍只认 dutyCheckins（不被 records 桥接误计入）', async () => {
+    const admin = await h.loginAs('admin');
+    const u = `ft${Date.now() % 99999}`;
+    const area = await admin.req('POST', '/api/v1/duty/areas', { body: { name: `执勤区${u}` } });
+    const users = await admin.req('GET', '/api/v1/users');
+    const teacher = users.json.data.find((x: any) => x.username === 'teacher1');
+    await admin.req('POST', '/api/v1/duty/schedules', {
+      body: {
+        kind: 'teaching', area_id: area.json.data.id,
+        date_start: todayKey, date_end: todayKey, weekday: todayWeekday, week_parity: 'everyweek',
+        countersign: false, assignee_ids: [teacher.id],
+      },
+    });
+    // teacher1 今天提交了 records（值周记录），但这是 teaching 排班，不该因 records 算到岗
+    const t = await h.loginAs('teacher1');
+    const form = new FormData();
+    form.set('class_id', seed.cls1.id);
+    form.set('score', '1');
+    form.set('week', '2026-W41');
+    await t.req('POST', '/api/v1/records', { body: form, isForm: true });
+    // teaching 到岗率仍为 0（teacher 没打卡；records 只桥接 dutyWeek）
+    const att = await admin.req('GET', '/api/v1/duty/attendance', {
+      query: { date_from: todayKey, date_to: todayKey, kind: 'teaching' },
+    });
+    const me = att.json.data.byTeacher.find((b: any) => b.teacherId === teacher.id);
+    expect(me?.checkedIn ?? 0).toBe(0); // teaching 走打卡，不走 records 桥接
+  });
+});
