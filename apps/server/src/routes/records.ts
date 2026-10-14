@@ -59,9 +59,24 @@ export function createRecordRoutes(deps: RouteDeps): Hono {
     const tagIdRaw = form.get('tag_id');
     const tagId = tagIdRaw ? String(tagIdRaw) : null;
     const scoreRaw = form.get('score');
-    const score = scoreRaw !== null && scoreRaw !== '' ? Number(scoreRaw) : 0;
+    // REVIEW #6：score 零校验修复——'abc'→NaN 静默存 null、'1e308'→Infinity 撑爆 SUM、无范围限制。
+    // 值周分值是小整数（标签默认分 ±1~3），限定 ±100 且必须有限数。
+    let score = 0;
+    if (scoreRaw !== null && scoreRaw !== '') {
+      const parsed = Number(scoreRaw);
+      if (!Number.isFinite(parsed)) throw ApiError.badRequest(`分数非法（非有限数）：${scoreRaw}`);
+      if (parsed < -100 || parsed > 100) throw ApiError.badRequest('分数超出范围（应 -100~100）');
+      score = parsed;
+    }
     const commentRaw = form.get('comment');
     const comment = commentRaw ? String(commentRaw) : null;
+
+    // REVIEW #6：tag_id 存在时校验属本校区（防跨校区引用标签）+ score 未显式给时取标签默认分
+    if (tagId) {
+      const tag = await repos.tags.findById(tagId);
+      if (!tag) throw ApiError.badRequest('标签不存在');
+      if (tag.campusId !== ownership.campusId) throw ApiError.forbidden('不能引用他校区标签');
+    }
 
     // 图片上传 → storage（校验 MIME/大小/数量）
     const imageFiles = form.getAll('images').filter((f): f is File => f instanceof File && f.size > 0);

@@ -92,6 +92,63 @@ describe('#4 撤回记录不被 reject 复活（状态机合法性）', () => {
   });
 });
 
+describe('#6 records score/tagId 校验（防 NaN/Infinity 撑爆统计）', () => {
+  it('score=1e308 → 400（超范围，修复前存 Infinity 撑爆 SUM）', async () => {
+    const stu = await h.loginAs('student1');
+    const r = await stu.req('POST', '/api/v1/records', { body: recordForm(seed.cls1.id, '1e308'), isForm: true });
+    expect(r.status).toBe(400);
+  });
+  it('score=abc → 400（非有限数，修复前静默存 null）', async () => {
+    const stu = await h.loginAs('student1');
+    const r = await stu.req('POST', '/api/v1/records', { body: recordForm(seed.cls1.id, 'abc'), isForm: true });
+    expect(r.status).toBe(400);
+  });
+  it('score=999 → 400（超 ±100 范围）', async () => {
+    const stu = await h.loginAs('student1');
+    const r = await stu.req('POST', '/api/v1/records', { body: recordForm(seed.cls1.id, '999'), isForm: true });
+    expect(r.status).toBe(400);
+  });
+  it('score=5 合法 → 201（不误伤正常范围）', async () => {
+    const stu = await h.loginAs('student1');
+    const r = await stu.req('POST', '/api/v1/records', { body: recordForm(seed.cls1.id, '5'), isForm: true });
+    expect(r.status).toBe(201);
+  });
+  it('跨校区 tag_id → 403（不能引用他校区标签）', async () => {
+    const stu = await h.loginAs('student1'); // c1
+    // seed.tagC2 是 c2 的标签
+    const form = recordForm(seed.cls1.id, '-1');
+    form.set('tag_id', seed.tagC2.id);
+    const r = await stu.req('POST', '/api/v1/records', { body: form, isForm: true });
+    expect(r.status).toBe(403);
+  });
+});
+
+describe('#8 配置删除引用守卫（防孤儿子行，与值班域一致）', () => {
+  it('删除仍有班级的校区 → 409', async () => {
+    const admin = await h.loginAs('admin');
+    const r = await admin.req('DELETE', `/api/v1/campuses/${seed.c1.id}`);
+    expect(r.status).toBe(409); // c1 下有年级/班级/用户
+  });
+  it('删除仍有班级的年级 → 409', async () => {
+    const admin = await h.loginAs('admin');
+    const r = await admin.req('DELETE', `/api/v1/grades/${seed.g1.id}`);
+    expect(r.status).toBe(409); // g1 下有 cls1/cls2
+  });
+  it('删除仍有记录的班级 → 409', async () => {
+    const stu = await h.loginAs('student1');
+    await stu.req('POST', '/api/v1/records', { body: recordForm(seed.cls1.id, '-1'), isForm: true });
+    const admin = await h.loginAs('admin');
+    const r = await admin.req('DELETE', `/api/v1/classes/${seed.cls1.id}`);
+    expect(r.status).toBe(409); // cls1 下有记录
+  });
+  it('删除空年级（无班级）→ 200（守卫不误伤）', async () => {
+    const admin = await h.loginAs('admin');
+    const g = await admin.req('POST', '/api/v1/grades', { body: { name: `空年级${Date.now()}`, sort_order: 99 } });
+    const r = await admin.req('DELETE', `/api/v1/grades/${g.json.data.id}`);
+    expect(r.status).toBe(200);
+  });
+});
+
 describe('#2 删用户后其记录不静默消失（引用完整性）', () => {
   it('删除记录人后，列表仍显示该记录（recorderName 兜底），count 与 rows 一致', async () => {
     const admin = await h.loginAs('admin');

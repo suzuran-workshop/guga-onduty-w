@@ -69,7 +69,11 @@ export function createClassRoutes(deps: RouteDeps): Hono {
   // DELETE /:id —— admin 删班级
   app.delete('/:id', requireRole('admin'), async (c) => {
     const id = c.req.param('id');
-    assertOwnership(c, await repos.classes.findById(id));
+    const klass = await repos.classes.findById(id);
+    assertOwnership(c, klass); // 校验存在 + 归属
+    // REVIEW #8：班级下有记录则拒删（防 records 孤儿 → 列表 innerJoin 丢行/统计错算）
+    const recs = await repos.records.list({ campusId: klass!.campusId, classId: id, page: 1, pageSize: 1 });
+    if (recs.pagination.total > 0) throw ApiError.conflict(`该班级下仍有 ${recs.pagination.total} 条值周记录，无法删除`);
     await repos.classes.remove(id);
     return ok(c, { deleted: true });
   });

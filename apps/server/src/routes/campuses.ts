@@ -56,7 +56,17 @@ export function createCampusRoutes(deps: RouteDeps): Hono {
 
   // DELETE /:id —— admin 删校区
   app.delete('/:id', requireRole('admin'), async (c) => {
-    await repos.campuses.remove(c.req.param('id'));
+    const id = c.req.param('id');
+    const campus = await repos.campuses.findById(id);
+    if (!campus) throw ApiError.notFound('校区不存在');
+    // REVIEW #8：引用守卫（homura 无 DB FK，完整性靠应用层）——校区下有年级/班级/用户则拒删，防孤儿子行
+    const grades = await repos.grades.listByCampus(id);
+    if (grades.length > 0) throw ApiError.conflict(`该校区下仍有 ${grades.length} 个年级，无法删除`);
+    const classes = await repos.classes.listByCampus(id);
+    if (classes.length > 0) throw ApiError.conflict(`该校区下仍有 ${classes.length} 个班级，无法删除`);
+    const users = await repos.users.list(id);
+    if (users.length > 0) throw ApiError.conflict(`该校区下仍有 ${users.length} 个用户，无法删除`);
+    await repos.campuses.remove(id);
     return ok(c, { deleted: true });
   });
 

@@ -64,7 +64,11 @@ export function createGradeRoutes(deps: RouteDeps): Hono {
   // DELETE /:id —— admin 删年级
   app.delete('/:id', requireRole('admin'), async (c) => {
     const id = c.req.param('id');
-    assertOwnership(c, await repos.grades.findById(id));
+    const grade = await repos.grades.findById(id);
+    assertOwnership(c, grade); // 校验存在 + 归属（null/跨校区抛 404）
+    // REVIEW #8：年级下有班级则拒删（防 classes 孤儿）
+    const classes = await repos.classes.listByCampus(grade!.campusId, id);
+    if (classes.length > 0) throw ApiError.conflict(`该年级下仍有 ${classes.length} 个班级，无法删除`);
     await repos.grades.remove(id);
     return ok(c, { deleted: true });
   });
