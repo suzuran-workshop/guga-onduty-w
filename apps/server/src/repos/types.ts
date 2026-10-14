@@ -16,6 +16,7 @@ import type {
   Appeal, AppealWithDetails, DailySummary, Award, UserView, UserProfile, User,
   ClassRanking, TrendPoint, DashboardStats, RecordStatus, UserRole, Pagination,
 } from '@class-duty/shared';
+import type { DutyRepos } from './duty-types.js';
 
 /** 分页结果 */
 export interface Paged<T> {
@@ -175,4 +176,6 @@ export interface Repos {
   statistics: StatisticsRepo;
   awards: AwardsRepo;
   settings: SettingsRepo;
+  /** 值班域（融合方案，docs/DUTY-FUSION.md）—— 排班/打卡/巡查/调班 */
+  duty: DutyRepos;
 }

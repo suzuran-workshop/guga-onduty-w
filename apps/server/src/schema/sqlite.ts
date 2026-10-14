@@ -26,6 +26,8 @@ import {
   dutyAreas, dutyLocations, dutyTimeSlots, dutySchedules,
   dutyCheckins, dutyInspections, dutySwaps,
 } from './sqlite.duty.js';
+// 再导出，使 Tables(=typeof sqliteTables) 含值班表，repo 层可经 ctx.tables.dutyXxx 访问
+export { dutyAreas, dutyLocations, dutyTimeSlots, dutySchedules, dutyCheckins, dutyInspections, dutySwaps };
 
 /** 引用列（NOT NULL text，存 uuid）—— 完整性由 repo 层保证 */
 const ref = (name: string) => text(name).notNull();

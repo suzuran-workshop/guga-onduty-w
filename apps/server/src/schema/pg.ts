@@ -24,6 +24,7 @@ import {
   dutyAreas, dutyLocations, dutyTimeSlots, dutySchedules,
   dutyCheckins, dutyInspections, dutySwaps,
 } from './pg.duty.js';
+export { dutyAreas, dutyLocations, dutyTimeSlots, dutySchedules, dutyCheckins, dutyInspections, dutySwaps };
 
 /** 引用列（NOT NULL uuid）—— 引用另一表的 uuid 主键，完整性由 repo 层保证 */
 const ref = (name: string) => uuid(name).notNull();
