@@ -89,11 +89,13 @@ export function createStatisticsRepo(ctx: DrizzleCtx): StatisticsRepo {
     },
 
     async dashboard(campusId, dayStart, dayEnd, week): Promise<DashboardStats> {
+      // 今日聚合口径与 ranking 一致：active+appealing+appeal_approved 计入（仅 revoked 排除）。
+      // 修复旧代码今日只数 active 的 bug —— 当日记录被申诉/批准后从看板消失，语义不一致。
       const todayCond = and(
         eq(records.campusId, campusId),
         gte(records.recordedAt, dayStart),
         lt(records.recordedAt, dayEnd),
-        eq(records.status, 'active'),
+        sql`${records.status} IN (${sql.raw(SCORED_STATUSES.map((s) => `'${s}'`).join(','))})`,
       );
 
       // 今日聚合：一次查询取 count + 正/负分（旧代码是 3 条独立查询，合并）

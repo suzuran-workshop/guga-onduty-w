@@ -105,7 +105,12 @@ export interface Template {
   tags?: Tag[];
 }
 
-export interface Record {
+/**
+ * 值周记录领域对象。
+ * ⚠ 命名为 DutyRecord（非 Record）—— 避免遮蔽 TS 内置 Record<K,V> 工具类型
+ *   （遮蔽会让同文件/导入方的 Record<string,string> 等写法全部失效）。
+ */
+export interface DutyRecord {
   id: string;
   campusId: string;
   classId: string;
@@ -120,7 +125,7 @@ export interface Record {
   recordedAt: number;
 }
 
-export interface RecordWithDetails extends Record {
+export interface RecordWithDetails extends DutyRecord {
   className: string;
   gradeName: string;
   recorderName: string;

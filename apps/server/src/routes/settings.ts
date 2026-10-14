@@ -1,41 +1,39 @@
+/**
+ * settings 路由 —— 系统设置（key-value）。
+ *
+ * 迁移要点（对照旧 routes/settings.ts）：
+ *  - GET 返回 key-value map（非数组，复刻旧语义）。
+ *  - **PUT 收紧为 admin only**（修复旧代码 student 可改系统设置的越权）。
+ *  - upsertMany 事务化（repo 已实现，修复旧代码批量循环无事务的部分更新）。
+ *  - 读走 resolveCampusId 隔离；写校区走 resolveWriteCampusId（admin 可指定）。
+ */
 import { Hono } from 'hono';
-import { getDb } from '../db/connection.js';
-import { authMiddleware, getCurrentUser } from '../middleware/auth.js';
+import type { RouteDeps } from './_deps.js';
+import { requireRole, resolveCampusId, resolveWriteCampusId } from '../middleware/profile.js';
+import { ok, ApiError } from '../http/respond.js';
 
-export const settingRoutes = new Hono();
-settingRoutes.use('*', authMiddleware);
+export function createSettingRoutes(deps: RouteDeps): Hono {
+  const { repos } = deps;
+  const app = new Hono();
 
-// GET /api/v1/settings
-settingRoutes.get('/', (c) => {
-  const db = getDb();
-  const user = getCurrentUser(c);
-  const campusId = c.req.query('campus_id') || String(user.campus_id);
+  // GET / —— 本校区设置 map
+  app.get('/', async (c) => {
+    const map = await repos.settings.getMap(resolveCampusId(c));
+    return ok(c, map);
+  });
 
-  const rows = db.prepare(
-    'SELECT * FROM settings WHERE campus_id = ?'
-  ).all(Number(campusId));
+  // PUT / —— admin 批量 upsert 设置
+  app.put('/', requireRole('admin'), async (c) => {
+    const body = await c.req
+      .json<{ campus_id?: string; settings: { key: string; value: string }[] }>()
+      .catch(() => null as any);
+    if (!body?.settings || !Array.isArray(body.settings)) {
+      throw ApiError.badRequest('缺少 settings 数组');
+    }
+    const campusId = resolveWriteCampusId(c, body.campus_id);
+    await repos.settings.upsertMany(campusId, body.settings);
+    return ok(c, { updated: true });
+  });
 
-  // Return as key-value map
-  const map: Record<string, string> = {};
-  for (const r of rows as any[]) {
-    map[r.key] = r.value;
-  }
-
-  return c.json({ success: true, data: map });
-});
-
-// PUT /api/v1/settings (batch update)
-settingRoutes.put('/', async (c) => {
-  const body = await c.req.json<{ campus_id: number; settings: { key: string; value: string }[] }>();
-  const db = getDb();
-
-  const stmt = db.prepare(
-    'INSERT INTO settings (campus_id, key, value) VALUES (?, ?, ?) ON CONFLICT(campus_id, key) DO UPDATE SET value = excluded.value'
-  );
-
-  for (const s of body.settings) {
-    stmt.run(body.campus_id, s.key, s.value);
-  }
-
-  return c.json({ success: true, data: { updated: true } });
-});
+  return app;
+}

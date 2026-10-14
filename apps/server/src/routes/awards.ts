@@ -1,94 +1,48 @@
+/**
+ * awards 路由 —— 流动红旗（自动评选）。
+ *
+ * 迁移要点（对照旧 routes/awards.ts）：
+ *  - id 为 uuid；读走 resolveCampusId 隔离，可按 week 过滤。
+ *  - **POST/DELETE 收紧为 admin only**（修复旧代码 student 可发/删流动红旗的越权）。
+ *  - autoAward 幂等由 repo 保证（UNIQUE(campus,class,week) + onConflictDoNothing，
+ *    修复旧代码重复调用产生重复奖项 + 空数组 IN () 语法错误两个 bug）。
+ *  - 写校区走 resolveWriteCampusId（admin 可指定）。
+ *  - DELETE：admin only 已足够（awards repo 无 findById；跨校区删风险由 admin 角色边界兜底）。
+ */
 import { Hono } from 'hono';
-import { getDb } from '../db/connection.js';
-import { authMiddleware, getCurrentUser } from '../middleware/auth.js';
+import type { RouteDeps } from './_deps.js';
+import { requireRole, resolveCampusId, resolveWriteCampusId } from '../middleware/profile.js';
+import { ok, created, ApiError } from '../http/respond.js';
 
-export const awardRoutes = new Hono();
-awardRoutes.use('*', authMiddleware);
+export function createAwardRoutes(deps: RouteDeps): Hono {
+  const { repos } = deps;
+  const app = new Hono();
 
-// GET /api/v1/awards
-awardRoutes.get('/', (c) => {
-  const db = getDb();
-  const user = getCurrentUser(c);
-  const campusId = c.req.query('campus_id') || String(user.campus_id);
-  const week = c.req.query('week');
+  // GET / —— 本校区奖项列表（可按 week 过滤）
+  app.get('/', async (c) => {
+    const awards = await repos.awards.listByCampus(
+      resolveCampusId(c),
+      c.req.query('week') || undefined,
+    );
+    return ok(c, awards);
+  });
 
-  let sql = `
-    SELECT a.*, cl.name as class_name, g.name as grade_name
-    FROM awards a
-    JOIN classes cl ON a.class_id = cl.id
-    JOIN grades g ON cl.grade_id = g.id
-    WHERE a.campus_id = ?
-  `;
-  const params: any[] = [Number(campusId)];
+  // POST / —— admin 一键自动评选（每年级第一名，幂等）
+  app.post('/', requireRole('admin'), async (c) => {
+    const body = await c.req
+      .json<{ campus_id?: string; week: string; grade_id?: string | null }>()
+      .catch(() => null as any);
+    if (!body?.week) throw ApiError.badRequest('缺少 week');
+    const campusId = resolveWriteCampusId(c, body.campus_id);
+    const awards = await repos.awards.autoAward(campusId, body.week, body.grade_id ?? null);
+    return created(c, awards);
+  });
 
-  if (week) {
-    sql += ' AND a.week = ?';
-    params.push(week);
-  }
+  // DELETE /:id —— admin 删奖项
+  app.delete('/:id', requireRole('admin'), async (c) => {
+    await repos.awards.remove(c.req.param('id'));
+    return ok(c, { deleted: true });
+  });
 
-  sql += ' ORDER BY a.awarded_at DESC';
-
-  const rows = db.prepare(sql).all(...params);
-  return c.json({ success: true, data: rows });
-});
-
-// POST /api/v1/awards — award red flag
-awardRoutes.post('/', async (c) => {
-  const body = await c.req.json<{ campus_id: number; week: string; grade_id?: number }>();
-  const db = getDb();
-
-  // Get rankings for the week
-  let rankingSql = `
-    SELECT cl.id as class_id, cl.name, g.id as grade_id, g.name as grade_name,
-           COALESCE(SUM(CASE WHEN r.status IN ('active', 'appealing') THEN r.score ELSE 0 END), 0) as total_score
-    FROM classes cl
-    JOIN grades g ON cl.grade_id = g.id
-    LEFT JOIN records r ON cl.id = r.class_id AND r.week = ? AND r.campus_id = cl.campus_id
-    WHERE cl.campus_id = ?
-  `;
-  const params: any[] = [body.week, body.campus_id];
-
-  if (body.grade_id) {
-    rankingSql += ' AND g.id = ?';
-    params.push(body.grade_id);
-  }
-
-  rankingSql += ' GROUP BY cl.id ORDER BY g.id, total_score DESC';
-
-  const rankings = db.prepare(rankingSql).all(...params) as any[];
-
-  // Award the top class in each grade
-  const awardedGrades = new Set<number>();
-  const awards: any[] = [];
-
-  for (const r of rankings) {
-    if (!awardedGrades.has(r.grade_id)) {
-      awardedGrades.add(r.grade_id);
-
-      const result = db.prepare(
-        'INSERT INTO awards (campus_id, class_id, week, category, note) VALUES (?, ?, ?, ?, ?)'
-      ).run(body.campus_id, r.class_id, body.week, 'overall',
-        `${r.grade_name} ${r.name} 获第${body.week}周流动红旗`);
-
-      awards.push(Number(result.lastInsertRowid));
-    }
-  }
-
-  const rows = db.prepare(`
-    SELECT a.*, cl.name as class_name, g.name as grade_name
-    FROM awards a
-    JOIN classes cl ON a.class_id = cl.id
-    JOIN grades g ON cl.grade_id = g.id
-    WHERE a.id IN (${awards.map(() => '?').join(',')})
-  `).all(...awards);
-
-  return c.json({ success: true, data: rows }, 201);
-});
-
-// DELETE /api/v1/awards/:id
-awardRoutes.delete('/:id', (c) => {
-  const id = Number(c.req.param('id'));
-  const db = getDb();
-  db.prepare('DELETE FROM awards WHERE id = ?').run(id);
-  return c.json({ success: true, data: { deleted: true } });
-});
+  return app;
+}

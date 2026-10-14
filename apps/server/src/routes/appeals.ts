@@ -1,87 +1,58 @@
+/**
+ * appeals 路由 —— 申诉查询（只读；审批动作在 records 路由的 /records/:id/appeal/*）。
+ *
+ * 迁移要点（对照旧 routes/appeals.ts）：
+ *  - teacher 只看自己的申诉（传 teacherId=profile.userId）。
+ *  - 非 admin 按 resolveCampusId 隔离（修复旧代码 student/admin 看全局申诉的越权）。
+ *  - admin 可用 ?campus_id= 指定校区，不传则看全部（campusId=undefined）。
+ *  - list 一次 join 取 record_info（repo 已修复 N+1）。
+ *  - GET /:id 校验归属（非 admin/非本人不得跨校区看）。
+ */
 import { Hono } from 'hono';
-import { getDb } from '../db/connection.js';
-import { authMiddleware, getCurrentUser } from '../middleware/auth.js';
+import type { RouteDeps } from './_deps.js';
+import { getProfile, resolveCampusId } from '../middleware/profile.js';
+import { ok, ApiError, parsePagination } from '../http/respond.js';
 
-export const appealRoutes = new Hono();
-appealRoutes.use('*', authMiddleware);
+export function createAppealRoutes(deps: RouteDeps): Hono {
+  const { repos } = deps;
+  const app = new Hono();
 
-// GET /api/v1/appeals
-appealRoutes.get('/', (c) => {
-  const db = getDb();
-  const user = getCurrentUser(c);
-  const status = c.req.query('status');
-  const page = Number(c.req.query('page') || '1');
-  const pageSize = Number(c.req.query('pageSize') || '20');
+  // GET / —— 申诉列表（分页 + 角色/校区过滤）
+  app.get('/', async (c) => {
+    const profile = getProfile(c);
+    const { page, pageSize } = parsePagination(c);
 
-  let sql = `
-    SELECT a.*, u1.display_name as teacher_name, u2.display_name as reviewer_name
-    FROM appeals a
-    JOIN users u1 ON a.teacher_id = u1.id
-    LEFT JOIN users u2 ON a.reviewer_id = u2.id
-    WHERE 1=1
-  `;
-  const params: any[] = [];
+    // teacher 只看自己的；非 admin 按校区隔离；admin 可跨校区（?campus_id=）或看全部
+    const teacherId = profile.role === 'teacher' ? profile.userId : undefined;
+    const campusId = profile.role === 'admin'
+      ? (c.req.query('campus_id') || undefined)
+      : resolveCampusId(c);
 
-  // Teachers can only see their own appeals
-  if (user.role === 'teacher') {
-    sql += ' AND a.teacher_id = ?';
-    params.push(user.sub);
-  }
-
-  if (status) {
-    sql += ' AND a.status = ?';
-    params.push(status);
-  }
-
-  // Get total count
-  const countSql = `SELECT COUNT(*) as total FROM (${sql})`;
-  const { total } = db.prepare(countSql).all(...params)[0] as any;
-
-  sql += ' ORDER BY a.created_at DESC LIMIT ? OFFSET ?';
-  params.push(pageSize, (page - 1) * pageSize);
-
-  const rows = db.prepare(sql).all(...params);
-
-  // Attach record info to each appeal
-  const appeals = (rows as any[]).map((a) => {
-    const record = db.prepare(`
-      SELECT r.score, r.comment, r.week, r.recorded_at, r.status as record_status,
-             cl.name as class_name, t.name as tag_name
-      FROM records r
-      JOIN classes cl ON r.class_id = cl.id
-      LEFT JOIN tags t ON r.tag_id = t.id
-      WHERE r.id = ?
-    `).get(a.record_id) as any;
-
-    return {
-      ...a,
-      record_info: record || null,
-    };
+    const result = await repos.appeals.list({
+      campusId,
+      teacherId,
+      status: c.req.query('status') || undefined,
+      page,
+      pageSize,
+    });
+    return ok(c, result.data, result.pagination);
   });
 
-  return c.json({
-    success: true,
-    data: appeals,
-    pagination: { page, pageSize, total, totalPages: Math.ceil(total / pageSize) },
+  // GET /:id —— 申诉详情
+  app.get('/:id', async (c) => {
+    const profile = getProfile(c);
+    const appeal = await repos.appeals.findById(c.req.param('id'));
+    if (!appeal) throw ApiError.notFound('申诉不存在');
+    // teacher 只能看自己发起的申诉；admin 放行；student 无申诉语义，拒绝。
+    // 注：AppealWithDetails 不含 campusId，校区隔离的真实边界在 list 端点（已按 resolveCampusId 过滤），
+    // 详情端点靠「id 只能来自已隔离的列表」+ 角色校验兜底。
+    if (profile.role === 'teacher') {
+      if (appeal.teacherId !== profile.userId) throw ApiError.notFound('申诉不存在');
+    } else if (profile.role !== 'admin') {
+      throw ApiError.forbidden('无权查看申诉详情');
+    }
+    return ok(c, appeal);
   });
-});
 
-// GET /api/v1/appeals/:id
-appealRoutes.get('/:id', (c) => {
-  const id = Number(c.req.param('id'));
-  const db = getDb();
-
-  const row = db.prepare(`
-    SELECT a.*, u1.display_name as teacher_name, u2.display_name as reviewer_name
-    FROM appeals a
-    JOIN users u1 ON a.teacher_id = u1.id
-    LEFT JOIN users u2 ON a.reviewer_id = u2.id
-    WHERE a.id = ?
-  `).get(id);
-
-  if (!row) {
-    return c.json({ success: false, error: { code: 'NOT_FOUND', message: '申诉不存在' } }, 404);
-  }
-
-  return c.json({ success: true, data: row });
-});
+  return app;
+}

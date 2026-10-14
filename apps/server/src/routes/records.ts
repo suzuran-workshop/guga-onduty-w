@@ -1,267 +1,168 @@
+/**
+ * records 路由 —— 核心模块：multipart 图片上传（storage）+ SSE 推送 + 申诉状态机。
+ *
+ * 迁移要点（对照旧 routes/records.ts）：
+ *  - 图片上传：writeFileSync 落盘 → storage.uploadFile（返回 objectKey），并加 MIME/大小/数量校验。
+ *    修复旧缺陷：上传无校验、图片无读取端点（死数据）→ 读取走 /files/<key> 代理（app.ts 挂）。
+ *  - campusId 强制隔离：resolveWriteCampusId（非 admin 用 profile.campusId，忽略请求体）。
+ *  - create/revoke 走 repo（事务 + log）；撤回补 emit record_revoked（修复旧死代码）。
+ *  - 申诉端点保持 /records/:id/appeal/* 路径契约，但调 appeals repo（事务联动）。
+ *  - RBAC 收紧：revoke=admin，appeal=teacher，approve/reject=admin。
+ */
 import { Hono } from 'hono';
-import { getDb } from '../db/connection.js';
-import { authMiddleware, requireRole, getCurrentUser } from '../middleware/auth.js';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import crypto from 'node:crypto';
+import type { RouteDeps } from './_deps.js';
+import { getProfile, requireRole, resolveCampusId } from '../middleware/profile.js';
+import { ok, created, ApiError, parsePagination } from '../http/respond.js';
+import { EventBus } from '../utils/event-bus.js';
+import type { RecordStatus } from '@class-duty/shared';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const UPLOADS_DIR = join(__dirname, '../../uploads');
+const IMAGE_NS = 'records';
+const MAX_IMAGES = 9;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB/张
+const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
-mkdirSync(UPLOADS_DIR, { recursive: true });
+export function createRecordRoutes(deps: RouteDeps): Hono {
+  const { repos, storage } = deps;
+  const app = new Hono();
 
-export const recordRoutes = new Hono();
-recordRoutes.use('*', authMiddleware);
-
-// GET /api/v1/records
-recordRoutes.get('/', (c) => {
-  const db = getDb();
-  const user = getCurrentUser(c);
-  const campusId = c.req.query('campus_id') || String(user.campus_id);
-  const classId = c.req.query('class_id');
-  const week = c.req.query('week');
-  const status = c.req.query('status');
-  const page = Number(c.req.query('page') || '1');
-  const pageSize = Number(c.req.query('pageSize') || '20');
-
-  let sql = `
-    SELECT r.*, cl.name as class_name, g.name as grade_name,
-           u.display_name as recorder_name, t.name as tag_name, t.color as tag_color
-    FROM records r
-    JOIN classes cl ON r.class_id = cl.id
-    JOIN grades g ON cl.grade_id = g.id
-    JOIN users u ON r.recorder_id = u.id
-    LEFT JOIN tags t ON r.tag_id = t.id
-    WHERE r.campus_id = ?
-  `;
-  const params: any[] = [Number(campusId)];
-
-  if (classId) { sql += ' AND r.class_id = ?'; params.push(Number(classId)); }
-  if (week) { sql += ' AND r.week = ?'; params.push(week); }
-  if (status) { sql += ' AND r.status = ?'; params.push(status); }
-
-  // Count total — wrap the entire query as a subquery
-  const countSql = `SELECT COUNT(*) as total FROM (${sql})`;
-  const { total } = db.prepare(countSql).all(...params)[0] as any;
-
-  sql += ' ORDER BY r.recorded_at DESC LIMIT ? OFFSET ?';
-  params.push(pageSize, (page - 1) * pageSize);
-
-  const rows = db.prepare(sql).all(...params);
-
-  return c.json({
-    success: true,
-    data: rows,
-    pagination: {
+  // GET / —— 分页列表（campusId 强制隔离）
+  app.get('/', async (c) => {
+    const campusId = resolveCampusId(c);
+    const { page, pageSize } = parsePagination(c);
+    const status = c.req.query('status') as RecordStatus | undefined;
+    const result = await repos.records.list({
+      campusId,
+      classId: c.req.query('class_id') || undefined,
+      week: c.req.query('week') || undefined,
+      status: status || undefined,
       page,
       pageSize,
-      total,
-      totalPages: Math.ceil(total / pageSize),
-    },
+    });
+    return ok(c, result.data, result.pagination);
   });
-});
 
-// POST /api/v1/records (multipart form data)
-recordRoutes.post('/', async (c) => {
-  const user = getCurrentUser(c);
-  const db = getDb();
+  // POST / —— multipart 创建记录（图片 → storage）
+  app.post('/', async (c) => {
+    const profile = getProfile(c);
+    const form = await c.req.formData();
+    const classId = String(form.get('class_id') ?? '');
+    const week = String(form.get('week') ?? '');
+    if (!classId || !week) throw ApiError.badRequest('缺少 class_id 或 week');
 
-  // Parse multipart form data
-  const formData = await c.req.formData();
-  const classId = Number(formData.get('class_id'));
-  const tagId = formData.get('tag_id') ? Number(formData.get('tag_id')) : null;
-  const score = formData.get('score') ? Number(formData.get('score')) : 0;
-  const comment = formData.get('comment') as string | null;
-  const week = formData.get('week') as string;
-
-  // Get class info for campus_id
-  const classInfo = db.prepare('SELECT campus_id, grade_id FROM classes WHERE id = ?').get(classId) as any;
-  if (!classInfo) {
-    return c.json({ success: false, error: { code: 'NOT_FOUND', message: '班级不存在' } }, 404);
-  }
-
-  // Handle image uploads
-  const imagePaths: string[] = [];
-  const imageFiles = formData.getAll('images') as File[];
-
-  for (const file of imageFiles) {
-    if (file && file.size > 0) {
-      const ext = file.name.split('.').pop() || 'jpg';
-      const filename = `${crypto.randomUUID()}.${ext}`;
-      const dateDir = new Date().toISOString().slice(0, 7).replace('-', '/'); // YYYY/MM
-      const uploadDir = join(UPLOADS_DIR, dateDir);
-      mkdirSync(uploadDir, { recursive: true });
-
-      const buffer = Buffer.from(await file.arrayBuffer());
-      writeFileSync(join(uploadDir, filename), buffer);
-      imagePaths.push(`${dateDir}/${filename}`);
+    // 班级归属：记录 campusId = 班级所在校区（与旧代码一致）；非 admin 不得跨校区打分
+    const ownership = await repos.classes.findOwnership(classId);
+    if (!ownership) throw ApiError.notFound('班级不存在');
+    if (profile.role !== 'admin' && ownership.campusId !== profile.campusId) {
+      throw ApiError.forbidden('不能跨校区记录');
     }
-  }
 
-  const result = db.prepare(`
-    INSERT INTO records (campus_id, class_id, recorder_id, tag_id, score, comment, images, week)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    classInfo.campus_id, classId, user.sub, tagId, score,
-    comment || null,
-    imagePaths.length > 0 ? JSON.stringify(imagePaths) : null,
-    week
-  );
+    const tagIdRaw = form.get('tag_id');
+    const tagId = tagIdRaw ? String(tagIdRaw) : null;
+    const scoreRaw = form.get('score');
+    const score = scoreRaw !== null && scoreRaw !== '' ? Number(scoreRaw) : 0;
+    const commentRaw = form.get('comment');
+    const comment = commentRaw ? String(commentRaw) : null;
 
-  // Also write to record_logs
-  db.prepare(`INSERT INTO record_logs (record_id, action, operator_id) VALUES (?, 'create', ?)`).run(
-    Number(result.lastInsertRowid), user.sub
-  );
+    // 图片上传 → storage（校验 MIME/大小/数量）
+    const imageFiles = form.getAll('images').filter((f): f is File => f instanceof File && f.size > 0);
+    if (imageFiles.length > MAX_IMAGES) throw ApiError.badRequest(`图片最多 ${MAX_IMAGES} 张`);
+    const objectKeys: string[] = [];
+    for (const file of imageFiles) {
+      if (!ALLOWED_MIME.includes(file.type)) {
+        throw ApiError.badRequest(`不支持的图片类型：${file.type || '未知'}（仅 jpg/png/gif/webp）`);
+      }
+      if (file.size > MAX_IMAGE_BYTES) {
+        throw ApiError.badRequest(`图片 ${file.name} 超过 ${MAX_IMAGE_BYTES / 1024 / 1024}MB 上限`);
+      }
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const r = await storage.uploadFile(IMAGE_NS, file.name || 'image.jpg', bytes, file.type);
+      objectKeys.push(r.objectKey);
+    }
 
-  // Emit SSE event
-  const { EventBus } = await import('../utils/event-bus.js');
-  EventBus.emit('record_created', {
-    record_id: Number(result.lastInsertRowid),
-    class_name: (db.prepare('SELECT name FROM classes WHERE id = ?').get(classId) as any)?.name,
-    tag_name: tagId ? (db.prepare('SELECT name FROM tags WHERE id = ?').get(tagId) as any)?.name : null,
-    points: score,
-    timestamp: new Date().toISOString(),
-    campus_id: classInfo.campus_id,
+    const record = await repos.records.create({
+      campusId: ownership.campusId,
+      classId,
+      recorderId: profile.userId,
+      tagId,
+      score,
+      comment,
+      images: objectKeys.length > 0 ? objectKeys : null,
+      week,
+      recordedAt: Date.now(),
+    });
+
+    // SSE 推送（补 emit；旧代码 create 有 emit、revoke 无）
+    EventBus.emit('record_created', {
+      recordId: record.id,
+      className: record.className,
+      tagName: record.tagName,
+      points: record.score ?? 0,
+      timestamp: record.recordedAt,
+      campusId: record.campusId,
+    });
+
+    return created(c, record);
   });
 
-  const row = db.prepare(`
-    SELECT r.*, cl.name as class_name, g.name as grade_name,
-           u.display_name as recorder_name, t.name as tag_name
-    FROM records r
-    JOIN classes cl ON r.class_id = cl.id
-    JOIN grades g ON cl.grade_id = g.id
-    JOIN users u ON r.recorder_id = u.id
-    LEFT JOIN tags t ON r.tag_id = t.id
-    WHERE r.id = ?
-  `).get(Number(result.lastInsertRowid));
+  // GET /:id —— 详情（校区隔离：非 admin 只能看本校区）
+  app.get('/:id', async (c) => {
+    const campusId = resolveCampusId(c);
+    const record = await repos.records.findByIdWithDetails(c.req.param('id'));
+    if (!record) throw ApiError.notFound('记录不存在');
+    if (record.campusId !== campusId && getProfile(c).role !== 'admin') {
+      throw ApiError.notFound('记录不存在'); // 不泄露跨校区记录的存在性
+    }
+    return ok(c, record);
+  });
 
-  return c.json({ success: true, data: row }, 201);
-});
+  // DELETE /:id —— admin 撤回（软删）
+  app.delete('/:id', requireRole('admin'), async (c) => {
+    await revokeAndEmit(c.req.param('id'), getProfile(c).userId, '管理员撤回');
+    return ok(c, { revoked: true });
+  });
 
-// GET /api/v1/records/:id
-recordRoutes.get('/:id', (c) => {
-  const id = Number(c.req.param('id'));
-  const db = getDb();
+  // POST /:id/revoke —— admin 撤回（带 reason）
+  app.post('/:id/revoke', requireRole('admin'), async (c) => {
+    const body = await c.req.json<{ reason?: string }>().catch(() => ({}) as { reason?: string });
+    await revokeAndEmit(c.req.param('id'), getProfile(c).userId, body.reason || '管理员撤回');
+    return ok(c, { revoked: true });
+  });
 
-  const row = db.prepare(`
-    SELECT r.*, cl.name as class_name, g.name as grade_name,
-           u.display_name as recorder_name, t.name as tag_name, t.color as tag_color
-    FROM records r
-    JOIN classes cl ON r.class_id = cl.id
-    JOIN grades g ON cl.grade_id = g.id
-    JOIN users u ON r.recorder_id = u.id
-    LEFT JOIN tags t ON r.tag_id = t.id
-    WHERE r.id = ?
-  `).get(id);
+  // POST /:id/appeal —— teacher 申诉
+  app.post('/:id/appeal', requireRole('teacher'), async (c) => {
+    const profile = getProfile(c);
+    const body = await c.req.json<{ reason: string }>().catch(() => ({ reason: '' }));
+    if (!body.reason) throw ApiError.badRequest('申诉理由不能为空');
+    const recordId = c.req.param('id');
+    const record = await repos.records.findByIdWithDetails(recordId);
+    if (!record) throw ApiError.notFound('记录不存在');
+    if (record.campusId !== profile.campusId) throw ApiError.forbidden('不能跨校区申诉');
+    if (record.status !== 'active') throw ApiError.badRequest('仅 active 记录可申诉');
+    await repos.appeals.create({ recordId, teacherId: profile.userId, reason: body.reason, campusId: profile.campusId });
+    return created(c, { appealed: true });
+  });
 
-  if (!row) {
-    return c.json({ success: false, error: { code: 'NOT_FOUND', message: '记录不存在' } }, 404);
+  // POST /:id/appeal/approve —— admin 批准
+  app.post('/:id/appeal/approve', requireRole('admin'), async (c) => {
+    const body = await c.req.json<{ review_comment?: string }>().catch(() => ({}) as { review_comment?: string });
+    await repos.appeals.approve(c.req.param('id'), getProfile(c).userId, body.review_comment ?? null);
+    return ok(c, { approved: true });
+  });
+
+  // POST /:id/appeal/reject —— admin 驳回
+  app.post('/:id/appeal/reject', requireRole('admin'), async (c) => {
+    const body = await c.req.json<{ review_comment?: string }>().catch(() => ({}) as { review_comment?: string });
+    await repos.appeals.reject(c.req.param('id'), getProfile(c).userId, body.review_comment ?? null);
+    return ok(c, { rejected: true });
+  });
+
+  /** 撤回 + emit record_revoked（修复旧死代码） */
+  async function revokeAndEmit(id: string, operatorId: string, reason: string) {
+    const before = await repos.records.findByIdWithDetails(id);
+    if (!before) throw ApiError.notFound('记录不存在');
+    await repos.records.revoke(id, operatorId, reason);
+    EventBus.emit('record_revoked', { recordId: id, campusId: before.campusId, timestamp: Date.now() });
   }
 
-  return c.json({ success: true, data: row });
-});
-
-// DELETE /api/v1/records/:id (admin revoke) — soft delete, sets status = 'revoked'
-recordRoutes.delete('/:id', requireRole('admin'), (c) => {
-  const id = Number(c.req.param('id'));
-  const user = getCurrentUser(c);
-  const db = getDb();
-
-  db.prepare(`UPDATE records SET status = 'revoked' WHERE id = ?`).run(id);
-  db.prepare(`INSERT INTO record_logs (record_id, action, operator_id, reason) VALUES (?, 'revoke', ?, '管理员撤回')`).run(id, user.sub);
-
-  return c.json({ success: true, data: { revoked: true } });
-});
-
-// POST /api/v1/records/:id/revoke
-recordRoutes.post('/:id/revoke', requireRole('admin'), async (c) => {
-  const id = Number(c.req.param('id'));
-  const user = getCurrentUser(c);
-  const body = await c.req.json<{ reason?: string }>();
-  const db = getDb();
-
-  db.prepare(`UPDATE records SET status = 'revoked' WHERE id = ? AND status = 'active'`).run(id);
-  db.prepare(
-    `INSERT INTO record_logs (record_id, action, operator_id, reason) VALUES (?, 'revoke', ?, ?)`
-  ).run(id, user.sub, body.reason || '管理员撤回');
-
-  return c.json({ success: true, data: { revoked: true } });
-});
-
-// POST /api/v1/records/:id/appeal (teacher)
-recordRoutes.post('/:id/appeal', requireRole('teacher'), async (c) => {
-  const id = Number(c.req.param('id'));
-  const user = getCurrentUser(c);
-  const body = await c.req.json<{ reason: string }>();
-  const db = getDb();
-
-  // Verify record exists and belongs to teacher's campus
-  const record = db.prepare('SELECT * FROM records WHERE id = ?').get(id) as any;
-  if (!record) {
-    return c.json({ success: false, error: { code: 'NOT_FOUND', message: '记录不存在' } }, 404);
-  }
-
-  // Update record status
-  db.prepare(`UPDATE records SET status = 'appealing' WHERE id = ? AND status = 'active'`).run(id);
-
-  // Create appeal
-  db.prepare(
-    'INSERT INTO appeals (record_id, teacher_id, reason) VALUES (?, ?, ?)'
-  ).run(id, user.sub, body.reason);
-
-  // Log
-  db.prepare(
-    `INSERT INTO record_logs (record_id, action, operator_id, reason) VALUES (?, 'appeal', ?, ?)`
-  ).run(id, user.sub, body.reason);
-
-  return c.json({ success: true, data: { appealed: true } }, 201);
-});
-
-// POST /api/v1/records/:id/appeal/approve (admin)
-recordRoutes.post('/:id/appeal/approve', requireRole('admin'), async (c) => {
-  const id = Number(c.req.param('id'));
-  const user = getCurrentUser(c);
-  const body = await c.req.json<{ review_comment?: string }>();
-  const db = getDb();
-
-  // Update appeal
-  db.prepare(`
-    UPDATE appeals SET status = 'approved', reviewer_id = ?, review_comment = ?, reviewed_at = datetime('now')
-    WHERE record_id = ? AND status = 'pending'
-  `).run(user.sub, body.review_comment || null, id);
-
-  // Update record status
-  db.prepare(`UPDATE records SET status = 'appeal_approved' WHERE id = ?`).run(id);
-
-  // Log
-  db.prepare(
-    `INSERT INTO record_logs (record_id, action, operator_id, reason) VALUES (?, 'appeal_approve', ?, ?)`
-  ).run(id, user.sub, body.review_comment || '申诉审批通过');
-
-  return c.json({ success: true, data: { approved: true } });
-});
-
-// POST /api/v1/records/:id/appeal/reject (admin)
-recordRoutes.post('/:id/appeal/reject', requireRole('admin'), async (c) => {
-  const id = Number(c.req.param('id'));
-  const user = getCurrentUser(c);
-  const body = await c.req.json<{ review_comment?: string }>();
-  const db = getDb();
-
-  // Update appeal
-  db.prepare(`
-    UPDATE appeals SET status = 'rejected', reviewer_id = ?, review_comment = ?, reviewed_at = datetime('now')
-    WHERE record_id = ? AND status = 'pending'
-  `).run(user.sub, body.review_comment || null, id);
-
-  // Revert record status back to active
-  db.prepare(`UPDATE records SET status = 'active' WHERE id = ?`).run(id);
-
-  // Log
-  db.prepare(
-    `INSERT INTO record_logs (record_id, action, operator_id, reason) VALUES (?, 'appeal_reject', ?, ?)`
-  ).run(id, user.sub, body.review_comment || '申诉被驳回');
-
-  return c.json({ success: true, data: { rejected: true } });
-});
+  return app;
+}

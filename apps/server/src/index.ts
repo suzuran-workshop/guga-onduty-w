@@ -1,34 +1,48 @@
-import { serve } from '@hono/node-server';
-import { createApp } from './app.js';
-import { runMigrations } from './db/schema.js';
+/**
+ * standalone 入口 —— 独立部署形态（sqlite/pg + local-fs storage）。
+ *
+ * RuntimeAdapter（createNodeAdapter）收口形态差异：
+ *  - start(app, {port})：读 PORT/HOST，@hono/node-server 监听，支持 AbortSignal 优雅关闭。
+ *  - trustProxy()：standalone 由 TRUST_PROXY=1 开启 → 接到 auth cookie 的 secure 选项。
+ *  - assetsDir(env)：前端静态资源目录（缺省 dist/client）→ 接到 createApp 的 staticDir。
+ *
+ * 冷启动：pnpm db:seed && pnpm dev（见 AGENTS.md）。
+ */
+import { createNodeAdapter } from '@homurajs/app-kit/serve';
+import { bootstrap } from './bootstrap.js';
 
-// Initialize database schema on startup
-runMigrations();
+async function main() {
+  const adapter = createNodeAdapter();
+  const secure = adapter.trustProxy();
+  const staticDir = adapter.assetsDir(process.env);
 
-const app = createApp();
+  const { cfg, logger, homura, shutdown } = await bootstrap({ secure, staticDir, loginPath: '/login' });
 
-const port = Number(process.env.PORT) || 3000;
+  const port = cfg.get('port');
+  const ac = new AbortController();
 
-const server = serve({
-  fetch: app.fetch,
-  port,
-});
-
-console.log(`校园值周应用服务端已启动: http://localhost:${port}`);
-
-// Graceful shutdown
-process.on('SIGINT', () => {
-  console.log('\n正在关闭服务...');
-  server.close();
-  process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-  server.close((err) => {
-    if (err) {
-      console.error(err);
-      process.exit(1);
-    }
-    process.exit(0);
+  await adapter.start(homura.app, { port, signal: ac.signal });
+  logger.info('校园值周应用服务端已启动', {
+    runtime: homura.runtime.target,
+    port,
+    secure,
+    staticDir,
+    healthz: homura.healthzPath,
   });
+
+  // 优雅关闭
+  const stop = (sig: string) => {
+    logger.info('正在关闭服务', { sig });
+    ac.abort();
+    shutdown();
+    // 给 adapter 一点时间 flush，再退出
+    setTimeout(() => process.exit(0), 100).unref();
+  };
+  process.on('SIGINT', () => stop('SIGINT'));
+  process.on('SIGTERM', () => stop('SIGTERM'));
+}
+
+main().catch((err) => {
+  console.error('启动失败:', err);
+  process.exit(1);
 });

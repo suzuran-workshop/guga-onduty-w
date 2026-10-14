@@ -1,86 +1,87 @@
+/**
+ * users 路由 —— admin 管理用户（建号带 role/campus）。
+ *
+ * 迁移要点（对照旧 routes/users.ts + routes/auth.ts 的 register）：
+ *  - 建号走 users-repo.create（auth SDK register + userProfiles），密码 scrypt（非 bcryptjs）。
+ *  - 全部端点 requireRole('admin')（旧代码已如此，保留）。
+ *  - campusId：resolveWriteCampusId（admin 可跨校区建号，符合旧 register 语义）。
+ *  - 合并旧 auth.ts 的 POST /register 到此处 POST /（都是 admin 建号，去重）。
+ *  - 角色变更即时生效（profile 每请求查库，无旧 JWT 缓存问题）。
+ */
 import { Hono } from 'hono';
-import { getDb } from '../db/connection.js';
-import { authMiddleware, requireRole, getCurrentUser } from '../middleware/auth.js';
-import bcryptjs from 'bcryptjs';
+import type { RouteDeps } from './_deps.js';
+import { requireRole, resolveWriteCampusId } from '../middleware/profile.js';
+import { ok, created, ApiError, isUniqueViolation } from '../http/respond.js';
+import type { UserRole } from '@class-duty/shared';
 
-export const userRoutes = new Hono();
-userRoutes.use('*', authMiddleware);
+const VALID_ROLES: UserRole[] = ['admin', 'teacher', 'student'];
 
-// GET /api/v1/users
-userRoutes.get('/', requireRole('admin'), (c) => {
-  const db = getDb();
-  const campusId = c.req.query('campus_id');
-  const role = c.req.query('role');
+export function createUserRoutes(deps: RouteDeps): Hono {
+  const { repos } = deps;
+  const app = new Hono();
 
-  let sql = `
-    SELECT u.id, u.campus_id, u.username, u.display_name, u.role, u.group_id, u.created_at,
-           dg.name as group_name, c.name as campus_name
-    FROM users u
-    LEFT JOIN duty_groups dg ON u.group_id = dg.id
-    JOIN campuses c ON u.campus_id = c.id
-    WHERE 1=1
-  `;
-  const params: any[] = [];
+  // 全部端点仅 admin
+  app.use('*', requireRole('admin'));
 
-  if (campusId) {
-    sql += ' AND u.campus_id = ?';
-    params.push(Number(campusId));
-  }
-  if (role) {
-    sql += ' AND u.role = ?';
-    params.push(role);
-  }
+  // GET / —— 用户列表（可按 campus/role 过滤）
+  app.get('/', async (c) => {
+    const campusId = c.req.query('campus_id') || undefined;
+    const role = c.req.query('role') as UserRole | undefined;
+    const users = await repos.users.list(campusId, role);
+    return ok(c, users);
+  });
 
-  sql += ' ORDER BY u.campus_id, u.role, u.id';
+  // POST / —— 建号（auth register + profile）
+  app.post('/', async (c) => {
+    const body = await c.req.json<{
+      campus_id?: string; username: string; password?: string;
+      display_name: string; role: UserRole; group_id?: string | null;
+    }>().catch(() => null as any);
+    if (!body?.username || !body.display_name || !body.role) {
+      throw ApiError.badRequest('缺少 username / display_name / role');
+    }
+    if (!VALID_ROLES.includes(body.role)) {
+      throw ApiError.badRequest(`role 非法（应 admin/teacher/student）`);
+    }
+    const campusId = resolveWriteCampusId(c, body.campus_id);
+    try {
+      const user = await repos.users.create({
+        campusId,
+        username: body.username,
+        password: body.password || '123456',
+        displayName: body.display_name,
+        role: body.role,
+        groupId: body.group_id ?? null,
+      });
+      return created(c, user);
+    } catch (e) {
+      // username 占用（SDK UsernameTakenError 或唯一约束）→ 409
+      if (isUniqueViolation(e) || (e as any)?.name === 'UsernameTakenError') {
+        throw ApiError.conflict('用户名已存在');
+      }
+      throw e;
+    }
+  });
 
-  const rows = db.prepare(sql).all(...params);
-  return c.json({ success: true, data: rows });
-});
+  // PUT /:id —— 改档案（displayName/role/groupId）
+  app.put('/:id', async (c) => {
+    const body = await c.req.json<{ display_name: string; role: UserRole; group_id?: string | null }>().catch(() => null as any);
+    if (!body?.display_name || !body.role) throw ApiError.badRequest('缺少 display_name / role');
+    if (!VALID_ROLES.includes(body.role)) throw ApiError.badRequest('role 非法');
+    const user = await repos.users.update(c.req.param('id'), {
+      displayName: body.display_name,
+      role: body.role,
+      groupId: body.group_id ?? null,
+    });
+    if (!user) throw ApiError.notFound('用户不存在');
+    return ok(c, user);
+  });
 
-// POST /api/v1/users (admin only)
-userRoutes.post('/', requireRole('admin'), async (c) => {
-  const body = await c.req.json<{
-    campus_id: number; username: string; password?: string; display_name: string;
-    role: string; group_id?: number;
-  }>();
-  const db = getDb();
-  const password = body.password || '123456';
-  const hash = bcryptjs.hashSync(password, 10);
+  // DELETE /:id —— 删用户（身份 + 档案 + 凭证）
+  app.delete('/:id', async (c) => {
+    await repos.users.remove(c.req.param('id'));
+    return ok(c, { deleted: true });
+  });
 
-  try {
-    const result = db.prepare(
-      'INSERT INTO users (campus_id, username, password_hash, display_name, role, group_id) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(body.campus_id, body.username, hash, body.display_name, body.role, body.group_id || null);
-
-    const row = db.prepare(
-      'SELECT u.id, u.campus_id, u.username, u.display_name, u.role, u.group_id, u.created_at FROM users u WHERE u.id = ?'
-    ).get(Number(result.lastInsertRowid));
-    return c.json({ success: true, data: row }, 201);
-  } catch (e: any) {
-    return c.json({ success: false, error: { code: 'CONFLICT', message: e.message } }, 409);
-  }
-});
-
-// PUT /api/v1/users/:id
-userRoutes.put('/:id', requireRole('admin'), async (c) => {
-  const id = Number(c.req.param('id'));
-  const body = await c.req.json<{ display_name: string; role: string; group_id?: number }>();
-  const db = getDb();
-
-  db.prepare('UPDATE users SET display_name = ?, role = ?, group_id = ? WHERE id = ?').run(
-    body.display_name, body.role, body.group_id || null, id
-  );
-
-  const row = db.prepare(
-    'SELECT u.id, u.campus_id, u.username, u.display_name, u.role, u.group_id, u.created_at FROM users u WHERE u.id = ?'
-  ).get(id);
-  return c.json({ success: true, data: row });
-});
-
-// DELETE /api/v1/users/:id
-userRoutes.delete('/:id', requireRole('admin'), (c) => {
-  const id = Number(c.req.param('id'));
-  const db = getDb();
-  db.prepare('DELETE FROM users WHERE id = ?').run(id);
-  return c.json({ success: true, data: { deleted: true } });
-});
+  return app;
+}

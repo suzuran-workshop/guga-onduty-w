@@ -1,72 +1,78 @@
+/**
+ * classes 路由 —— 班级 CRUD。
+ *
+ * 迁移要点（对照旧 routes/classes.ts）：
+ *  - id 为 uuid；读走 resolveCampusId 隔离，可按 grade_id 过滤。
+ *  - **写端点收紧为 admin only**（修复旧代码 student 可增删改班级的越权）。
+ *  - PUT/DELETE 先 findById 校验归属（非 admin 不得跨校区）。
+ *  - 唯一约束冲突（campus+grade+name 重复）转 409。
+ */
 import { Hono } from 'hono';
-import { getDb } from '../db/connection.js';
-import { authMiddleware, getCurrentUser } from '../middleware/auth.js';
+import type { Context } from 'hono';
+import type { RouteDeps } from './_deps.js';
+import { getProfile, requireRole, resolveCampusId, resolveWriteCampusId } from '../middleware/profile.js';
+import { ok, created, ApiError, isUniqueViolation } from '../http/respond.js';
 
-export const classRoutes = new Hono();
-classRoutes.use('*', authMiddleware);
-
-// GET /api/v1/classes
-classRoutes.get('/', (c) => {
-  const db = getDb();
-  const user = getCurrentUser(c);
-  const campusId = c.req.query('campus_id') || String(user.campus_id);
-  const gradeId = c.req.query('grade_id');
-
-  let sql = `
-    SELECT cl.*, g.name as grade_name, c.name as campus_name
-    FROM classes cl
-    JOIN grades g ON cl.grade_id = g.id
-    JOIN campuses c ON cl.campus_id = c.id
-    WHERE cl.campus_id = ?
-  `;
-  const params: any[] = [Number(campusId)];
-
-  if (gradeId) {
-    sql += ' AND cl.grade_id = ?';
-    params.push(Number(gradeId));
+function assertOwnership(c: Context, entity: { campusId: string } | null) {
+  if (!entity) throw ApiError.notFound('班级不存在');
+  const profile = getProfile(c);
+  if (profile.role !== 'admin' && entity.campusId !== profile.campusId) {
+    throw ApiError.notFound('班级不存在');
   }
+}
 
-  sql += ' ORDER BY g.sort_order, cl.name';
+export function createClassRoutes(deps: RouteDeps): Hono {
+  const { repos } = deps;
+  const app = new Hono();
 
-  const rows = db.prepare(sql).all(...params);
-  return c.json({ success: true, data: rows });
-});
+  // GET / —— 本校区班级列表（可按年级过滤，含 gradeName）
+  app.get('/', async (c) => {
+    const classes = await repos.classes.listByCampus(
+      resolveCampusId(c),
+      c.req.query('grade_id') || undefined,
+    );
+    return ok(c, classes);
+  });
 
-// POST /api/v1/classes
-classRoutes.post('/', async (c) => {
-  const body = await c.req.json<{ campus_id: number; grade_id: number; name: string; class_teacher?: string }>();
-  const db = getDb();
+  // POST / —— admin 建班级
+  app.post('/', requireRole('admin'), async (c) => {
+    const body = await c.req
+      .json<{ campus_id?: string; grade_id: string; name: string; class_teacher?: string }>()
+      .catch(() => null as any);
+    if (!body?.grade_id || !body.name) throw ApiError.badRequest('缺少 grade_id / name');
+    const campusId = resolveWriteCampusId(c, body.campus_id);
+    try {
+      const klass = await repos.classes.create({
+        campusId,
+        gradeId: body.grade_id,
+        name: body.name,
+        classTeacher: body.class_teacher ?? null,
+      });
+      return created(c, klass);
+    } catch (e) {
+      if (isUniqueViolation(e)) throw ApiError.conflict('同年级班级名已存在');
+      throw e;
+    }
+  });
 
-  try {
-    const result = db.prepare(
-      'INSERT INTO classes (grade_id, campus_id, name, class_teacher) VALUES (?, ?, ?, ?)'
-    ).run(body.grade_id, body.campus_id, body.name, body.class_teacher || null);
-    const row = db.prepare(
-      'SELECT cl.*, g.name as grade_name FROM classes cl JOIN grades g ON cl.grade_id = g.id WHERE cl.id = ?'
-    ).get(Number(result.lastInsertRowid));
-    return c.json({ success: true, data: row }, 201);
-  } catch (e: any) {
-    return c.json({ success: false, error: { code: 'CONFLICT', message: e.message } }, 409);
-  }
-});
+  // PUT /:id —— admin 改班级
+  app.put('/:id', requireRole('admin'), async (c) => {
+    const id = c.req.param('id');
+    const body = await c.req.json<{ name: string; class_teacher?: string }>().catch(() => null as any);
+    if (!body?.name) throw ApiError.badRequest('缺少 name');
+    assertOwnership(c, await repos.classes.findById(id));
+    const klass = await repos.classes.update(id, { name: body.name, classTeacher: body.class_teacher ?? null });
+    if (!klass) throw ApiError.notFound('班级不存在');
+    return ok(c, klass);
+  });
 
-// PUT /api/v1/classes/:id
-classRoutes.put('/:id', async (c) => {
-  const id = Number(c.req.param('id'));
-  const body = await c.req.json<{ name: string; class_teacher?: string }>();
-  const db = getDb();
+  // DELETE /:id —— admin 删班级
+  app.delete('/:id', requireRole('admin'), async (c) => {
+    const id = c.req.param('id');
+    assertOwnership(c, await repos.classes.findById(id));
+    await repos.classes.remove(id);
+    return ok(c, { deleted: true });
+  });
 
-  db.prepare('UPDATE classes SET name = ?, class_teacher = ? WHERE id = ?').run(body.name, body.class_teacher || null, id);
-  const row = db.prepare(
-    'SELECT cl.*, g.name as grade_name FROM classes cl JOIN grades g ON cl.grade_id = g.id WHERE cl.id = ?'
-  ).get(id);
-  return c.json({ success: true, data: row });
-});
-
-// DELETE /api/v1/classes/:id
-classRoutes.delete('/:id', (c) => {
-  const id = Number(c.req.param('id'));
-  const db = getDb();
-  db.prepare('DELETE FROM classes WHERE id = ?').run(id);
-  return c.json({ success: true, data: { deleted: true } });
-});
+  return app;
+}

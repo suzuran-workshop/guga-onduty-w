@@ -1,51 +1,96 @@
+/**
+ * App 装配 —— @homurajs/app-kit 的 createApp 中间件链。
+ *
+ * 固定链（app-kit 内部）：
+ *   basePath → requestId+访问日志 → healthz（豁免守卫）→ sessionMiddleware(SDK)
+ *   → authRoutes(SDK /auth/*) → [本项目 businessRoutes: requireProfile + /api/v1/* + /files]
+ *   → 静态资源 → SPA fallback → onError
+ *
+ * 修复的现有缺陷：
+ *  - CORS 硬编码 localhost → 读 CORS_ORIGINS env。
+ *  - 无 onError（DELETE 外键错误直接 500 泄栈）→ 统一 ApiError 转 JSON，未知错误不泄栈。
+ *  - 无静态托管/SPA fallback（前端要单独部署）→ app-kit staticDir 提供，生产同源托管。
+ *  - healthz 由 app-kit 按形态注册（standalone /healthz，qw-pages /_healthz），带 db 探活。
+ */
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { logger } from 'hono/logger';
-import { authRoutes } from './routes/auth.js';
-import { campusRoutes } from './routes/campuses.js';
-import { gradeRoutes } from './routes/grades.js';
-import { classRoutes } from './routes/classes.js';
-import { userRoutes } from './routes/users.js';
-import { groupRoutes } from './routes/groups.js';
-import { tagRoutes } from './routes/tags.js';
-import { templateRoutes } from './routes/templates.js';
-import { recordRoutes } from './routes/records.js';
-import { appealRoutes } from './routes/appeals.js';
-import { summaryRoutes } from './routes/summary.js';
-import { statisticsRoutes } from './routes/statistics.js';
-import { awardRoutes } from './routes/awards.js';
-import { settingRoutes } from './routes/settings.js';
-import { sseRoutes } from './routes/sse.js';
+import { createApp } from '@homurajs/app-kit';
+import type { HomuraApp } from '@homurajs/app-kit';
+import type { Logger } from '@homurajs/core';
 
-export function createApp(): Hono {
-  const app = new Hono();
+import type { AppConfig } from './config.js';
+import type { DbHandle } from './db/client.js';
+import { pingDb } from './db/client.js';
+import type { AuthBundle } from './auth/build.js';
+import { buildApiRoutes } from './routes/index.js';
+import { buildFileRoutes } from './storage/build.js';
+import type { FileStorage } from '@homurajs/storage';
+import type { Repos } from './repos/types.js';
+import { ApiError, isUniqueViolation } from './http/respond.js';
 
-  // Global middleware
-  app.use('*', cors({
-    origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
-    credentials: true,
-  }));
-  app.use('*', logger());
+export interface BuildAppOptions {
+  cfg: AppConfig;
+  handle: DbHandle;
+  auth: AuthBundle;
+  repos: Repos;
+  storage: FileStorage;
+  logger: Logger;
+  /** 前端静态资源目录（adapter.assetsDir 算出）；提供则挂 static + SPA fallback */
+  staticDir?: string;
+  /** cookie Secure（adapter.trustProxy 接线） */
+  secure: boolean;
+}
 
-  // Health check
-  app.get('/api/health', (c) => c.json({ status: 'ok', time: new Date().toISOString() }));
+export function buildApp(opts: BuildAppOptions): HomuraApp {
+  const { cfg, handle, auth, repos, storage, logger, staticDir, secure } = opts;
 
-  // Mount all route groups
-  app.route('/api/v1/auth', authRoutes);
-  app.route('/api/v1/campuses', campusRoutes);
-  app.route('/api/v1/grades', gradeRoutes);
-  app.route('/api/v1/classes', classRoutes);
-  app.route('/api/v1/users', userRoutes);
-  app.route('/api/v1/groups', groupRoutes);
-  app.route('/api/v1/tags', tagRoutes);
-  app.route('/api/v1/templates', templateRoutes);
-  app.route('/api/v1/records', recordRoutes);
-  app.route('/api/v1/appeals', appealRoutes);
-  app.route('/api/v1/summaries', summaryRoutes);
-  app.route('/api/v1/statistics', statisticsRoutes);
-  app.route('/api/v1/awards', awardRoutes);
-  app.route('/api/v1/settings', settingRoutes);
-  app.route('/api/v1/sse', sseRoutes);
+  const corsOrigins = cfg.get('corsOrigins').split(',').map((s) => s.trim()).filter(Boolean);
 
-  return app;
+  // 业务路由 + /files 代理（同一棵 Hono，交给 createApp 的 routes）
+  const business = new Hono();
+  // CORS 仅作用于业务/文件路由（SDK auth 路由的 cookie 由 sessionMiddleware 处理）
+  business.use('*', cors({ origin: corsOrigins, credentials: true }));
+  business.route('/', buildApiRoutes({ repos, storage, auth }));
+  // /files/<key> 代理下载（createFileProxyRoutes 内部已注册 /files/:key，故挂根路径 '/'）
+  // objectKey 为 uuid 前缀不可猜；<img> 同源自动带 cookie。修复旧代码图片死数据 bug。
+  business.route('/', buildFileRoutes(storage));
+
+  return createApp({
+    runtime: (cfg.get('runtime') as 'standalone' | 'qw-pages' | undefined) || 'auto',
+    logger,
+    auth: {
+      sessions: auth.sessions,
+      sessionMiddleware: auth.sessionMiddleware,
+      authRoutes: auth.authRoutes,
+    },
+    storage,
+    db: handle.kind === 'drizzle' ? (handle.db as unknown as Record<string, unknown>) : undefined,
+    healthz: {
+      checks: [{ name: 'db', check: () => pingDb(handle) }],
+    },
+    staticDir,
+    routes: business,
+    onError: (err, { path }) => {
+      // 已知业务错误 → 结构化 JSON
+      if (err instanceof ApiError) {
+        return Response.json(
+          { success: false, error: { code: err.code, message: err.message, details: err.details } },
+          { status: err.status },
+        );
+      }
+      // 唯一约束冲突 → 409（部分 repo 未显式转 ApiError 时的兜底）
+      if (isUniqueViolation(err)) {
+        return Response.json(
+          { success: false, error: { code: 'CONFLICT', message: '资源已存在（唯一约束冲突）' } },
+          { status: 409 },
+        );
+      }
+      // 未知错误 → 500，不泄堆栈
+      logger.error('unhandled', { err: err.message, path });
+      return Response.json(
+        { success: false, error: { code: 'INTERNAL_ERROR', message: '服务器内部错误' } },
+        { status: 500 },
+      );
+    },
+  });
 }

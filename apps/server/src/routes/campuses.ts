@@ -1,60 +1,64 @@
+/**
+ * campuses 路由 —— 校区 CRUD。
+ *
+ * 迁移要点（对照旧 routes/campuses.ts）：
+ *  - id 为 uuid；GET admin 看全部（listAll）、非 admin 看自己（listForCampus）。
+ *  - 写端点 admin only（旧代码已如此，保留）。
+ *  - campuses 是顶层资源，PUT/DELETE 无需 campusId 归属校验。
+ *  - 唯一约束冲突（code 重复）转 409。
+ */
 import { Hono } from 'hono';
-import { getDb } from '../db/connection.js';
-import { authMiddleware, requireRole, getCurrentUser } from '../middleware/auth.js';
+import type { RouteDeps } from './_deps.js';
+import { getProfile, requireRole } from '../middleware/profile.js';
+import { ok, created, ApiError, isUniqueViolation } from '../http/respond.js';
 
-export const campusRoutes = new Hono();
+export function createCampusRoutes(deps: RouteDeps): Hono {
+  const { repos } = deps;
+  const app = new Hono();
 
-campusRoutes.use('*', authMiddleware);
+  // GET / —— admin 看全部，非 admin 看自己校区
+  app.get('/', async (c) => {
+    const profile = getProfile(c);
+    const campuses =
+      profile.role === 'admin'
+        ? await repos.campuses.listAll()
+        : await repos.campuses.listForCampus(profile.campusId);
+    return ok(c, campuses);
+  });
 
-// GET /api/v1/campuses
-campusRoutes.get('/', (c) => {
-  const db = getDb();
-  const user = getCurrentUser(c);
+  // POST / —— admin 建校区
+  app.post('/', requireRole('admin'), async (c) => {
+    const body = await c.req.json<{ name: string; code: string }>().catch(() => null as any);
+    if (!body?.name || !body.code) throw ApiError.badRequest('缺少 name / code');
+    try {
+      const campus = await repos.campuses.create({ name: body.name, code: body.code });
+      return created(c, campus);
+    } catch (e) {
+      if (isUniqueViolation(e)) throw ApiError.conflict('校区代号已存在');
+      throw e;
+    }
+  });
 
-  let rows;
-  if (user.role === 'admin') {
-    rows = db.prepare('SELECT * FROM campuses ORDER BY id').all();
-  } else {
-    rows = db.prepare('SELECT * FROM campuses WHERE id = ? ORDER BY id').all(user.campus_id);
-  }
+  // PUT /:id —— admin 改校区
+  app.put('/:id', requireRole('admin'), async (c) => {
+    const body = await c.req.json<{ name: string; code: string }>().catch(() => null as any);
+    if (!body?.name || !body.code) throw ApiError.badRequest('缺少 name / code');
+    try {
+      const campus = await repos.campuses.update(c.req.param('id'), { name: body.name, code: body.code });
+      if (!campus) throw ApiError.notFound('校区不存在');
+      return ok(c, campus);
+    } catch (e) {
+      if (e instanceof ApiError) throw e;
+      if (isUniqueViolation(e)) throw ApiError.conflict('校区代号已存在');
+      throw e;
+    }
+  });
 
-  return c.json({ success: true, data: rows });
-});
+  // DELETE /:id —— admin 删校区
+  app.delete('/:id', requireRole('admin'), async (c) => {
+    await repos.campuses.remove(c.req.param('id'));
+    return ok(c, { deleted: true });
+  });
 
-// POST /api/v1/campuses (admin only)
-campusRoutes.post('/', requireRole('admin'), async (c) => {
-  const body = await c.req.json<{ name: string; code: string }>();
-  const db = getDb();
-
-  try {
-    const result = db.prepare('INSERT INTO campuses (name, code) VALUES (?, ?)').run(body.name, body.code);
-    const row = db.prepare('SELECT * FROM campuses WHERE id = ?').get(Number(result.lastInsertRowid));
-    return c.json({ success: true, data: row }, 201);
-  } catch (e: any) {
-    return c.json({ success: false, error: { code: 'CONFLICT', message: e.message } }, 409);
-  }
-});
-
-// PUT /api/v1/campuses/:id
-campusRoutes.put('/:id', requireRole('admin'), async (c) => {
-  const id = Number(c.req.param('id'));
-  const body = await c.req.json<{ name: string; code: string }>();
-  const db = getDb();
-
-  db.prepare('UPDATE campuses SET name = ?, code = ? WHERE id = ?').run(body.name, body.code, id);
-  const row = db.prepare('SELECT * FROM campuses WHERE id = ?').get(id);
-
-  if (!row) {
-    return c.json({ success: false, error: { code: 'NOT_FOUND', message: '校区不存在' } }, 404);
-  }
-
-  return c.json({ success: true, data: row });
-});
-
-// DELETE /api/v1/campuses/:id
-campusRoutes.delete('/:id', requireRole('admin'), (c) => {
-  const id = Number(c.req.param('id'));
-  const db = getDb();
-  db.prepare('DELETE FROM campuses WHERE id = ?').run(id);
-  return c.json({ success: true, data: { deleted: true } });
-});
+  return app;
+}

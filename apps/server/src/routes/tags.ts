@@ -1,75 +1,94 @@
+/**
+ * tags 路由 —— 评价标签 CRUD。
+ *
+ * 迁移要点（对照旧 routes/tags.ts）：
+ *  - id 为 uuid；读走 resolveCampusId 隔离，可按 category 过滤。
+ *  - **写端点收紧为 admin only**（修复旧代码 student 可增删改标签的越权）。
+ *  - PUT 部分更新（repo 已实现：只改传入字段，修复旧代码缺字段静默重置 bug）。
+ *  - DELETE 系统标签额外拒绝（isSystem 为真 → 403，复刻旧逻辑）。
+ *  - PUT/DELETE 先 findById 校验归属（非 admin 不得跨校区）。
+ */
 import { Hono } from 'hono';
-import { getDb } from '../db/connection.js';
-import { authMiddleware, getCurrentUser } from '../middleware/auth.js';
+import type { Context } from 'hono';
+import type { RouteDeps } from './_deps.js';
+import { getProfile, requireRole, resolveCampusId, resolveWriteCampusId } from '../middleware/profile.js';
+import { ok, created, ApiError, isUniqueViolation } from '../http/respond.js';
+import type { Tag } from '@class-duty/shared';
 
-export const tagRoutes = new Hono();
-tagRoutes.use('*', authMiddleware);
-
-// GET /api/v1/tags
-tagRoutes.get('/', (c) => {
-  const db = getDb();
-  const user = getCurrentUser(c);
-  const campusId = c.req.query('campus_id') || String(user.campus_id);
-  const category = c.req.query('category');
-
-  let sql = 'SELECT * FROM tags WHERE campus_id = ?';
-  const params: any[] = [Number(campusId)];
-
-  if (category) {
-    sql += ' AND category = ?';
-    params.push(category);
+function assertOwnership(c: Context, tag: Tag | null): Tag {
+  if (!tag) throw ApiError.notFound('标签不存在');
+  const profile = getProfile(c);
+  if (profile.role !== 'admin' && tag.campusId !== profile.campusId) {
+    throw ApiError.notFound('标签不存在');
   }
+  return tag;
+}
 
-  sql += ' ORDER BY category, is_system DESC, name';
+export function createTagRoutes(deps: RouteDeps): Hono {
+  const { repos } = deps;
+  const app = new Hono();
 
-  const rows = db.prepare(sql).all(...params);
-  return c.json({ success: true, data: rows });
-});
+  // GET / —— 本校区标签列表（可按 category 过滤）
+  app.get('/', async (c) => {
+    const tags = await repos.tags.listByCampus(
+      resolveCampusId(c),
+      c.req.query('category') || undefined,
+    );
+    return ok(c, tags);
+  });
 
-// POST /api/v1/tags
-tagRoutes.post('/', async (c) => {
-  const body = await c.req.json<{
-    campus_id: number; name: string; score: number; color?: string;
-    category?: string; is_system?: boolean;
-  }>();
-  const db = getDb();
+  // POST / —— admin 建标签
+  app.post('/', requireRole('admin'), async (c) => {
+    const body = await c.req
+      .json<{
+        campus_id?: string; name: string; score: number;
+        color?: string; category?: string; is_system?: boolean;
+      }>()
+      .catch(() => null as any);
+    if (!body?.name || body.score === undefined) throw ApiError.badRequest('缺少 name / score');
+    const campusId = resolveWriteCampusId(c, body.campus_id);
+    try {
+      const tag = await repos.tags.create({
+        campusId,
+        name: body.name,
+        score: Number(body.score),
+        color: body.color,
+        category: body.category,
+        isSystem: body.is_system,
+      });
+      return created(c, tag);
+    } catch (e) {
+      if (isUniqueViolation(e)) throw ApiError.conflict('标签已存在');
+      throw e;
+    }
+  });
 
-  try {
-    const result = db.prepare(
-      'INSERT INTO tags (campus_id, name, score, color, category, is_system) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(body.campus_id, body.name, body.score, body.color || '#FFAACC', body.category || 'negative', body.is_system ? 1 : 0);
+  // PUT /:id —— admin 改标签（部分更新）
+  app.put('/:id', requireRole('admin'), async (c) => {
+    const id = c.req.param('id');
+    const body = await c.req
+      .json<{ name?: string; score?: number; color?: string; category?: string }>()
+      .catch(() => null as any);
+    if (!body) throw ApiError.badRequest('请求体非法');
+    assertOwnership(c, await repos.tags.findById(id));
+    const tag = await repos.tags.update(id, {
+      name: body.name,
+      score: body.score !== undefined ? Number(body.score) : undefined,
+      color: body.color,
+      category: body.category,
+    });
+    if (!tag) throw ApiError.notFound('标签不存在');
+    return ok(c, tag);
+  });
 
-    const row = db.prepare('SELECT * FROM tags WHERE id = ?').get(Number(result.lastInsertRowid));
-    return c.json({ success: true, data: row }, 201);
-  } catch (e: any) {
-    return c.json({ success: false, error: { code: 'CONFLICT', message: e.message } }, 409);
-  }
-});
+  // DELETE /:id —— admin 删标签（系统标签拒绝）
+  app.delete('/:id', requireRole('admin'), async (c) => {
+    const id = c.req.param('id');
+    const tag = assertOwnership(c, await repos.tags.findById(id));
+    if (tag.isSystem) throw ApiError.forbidden('系统标签不可删除');
+    await repos.tags.remove(id);
+    return ok(c, { deleted: true });
+  });
 
-// PUT /api/v1/tags/:id
-tagRoutes.put('/:id', async (c) => {
-  const id = Number(c.req.param('id'));
-  const body = await c.req.json<{ name: string; score: number; color?: string; category?: string }>();
-  const db = getDb();
-
-  db.prepare('UPDATE tags SET name = ?, score = ?, color = ?, category = ? WHERE id = ?').run(
-    body.name, body.score, body.color || '#FFAACC', body.category || 'negative', id
-  );
-
-  const row = db.prepare('SELECT * FROM tags WHERE id = ?').get(id);
-  return c.json({ success: true, data: row });
-});
-
-// DELETE /api/v1/tags/:id (only non-system tags)
-tagRoutes.delete('/:id', (c) => {
-  const id = Number(c.req.param('id'));
-  const db = getDb();
-
-  const tag = db.prepare('SELECT is_system FROM tags WHERE id = ?').get(id) as any;
-  if (tag?.is_system) {
-    return c.json({ success: false, error: { code: 'FORBIDDEN', message: '系统标签不可删除' } }, 403);
-  }
-
-  db.prepare('DELETE FROM tags WHERE id = ?').run(id);
-  return c.json({ success: true, data: { deleted: true } });
-});
+  return app;
+}

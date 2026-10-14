@@ -12,7 +12,7 @@
  *  - 返回领域对象（camelCase，见 @class-duty/shared）；JSON 列已反序列化为数组。
  */
 import type {
-  Campus, Grade, Class, DutyGroup, Tag, Template, Record, RecordWithDetails,
+  Campus, Grade, Class, DutyGroup, Tag, Template, RecordWithDetails,
   Appeal, AppealWithDetails, DailySummary, Award, UserView, UserProfile, User,
   ClassRanking, TrendPoint, DashboardStats, RecordStatus, UserRole, Pagination,
 } from '@class-duty/shared';
