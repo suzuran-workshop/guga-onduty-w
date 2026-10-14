@@ -1,16 +1,22 @@
 /**
- * 看板页 —— 今日统计 + 本周 Top5 + 最新记录。
+ * 看板页 —— 统一巡查职责平台的落地页（改良：值周统计 + 值班执勤同框）。
+ *
+ * 哲学价值（docs/REVIEW-PHILOSOPHY.md §1 断点3）：看板是每个用户登录后第一眼，
+ * 融合前只有值周一半。改良后新增「我的今日执勤」条——教师/值周生在此直接看到自己
+ * 今天要不要到岗、是否已打卡，一键跳打卡页。让「统一巡查职责」在最常用的门面兑现。
+ *
  * 迁移：Fluent Card/Table/Spinner → shadcn；数据走 useAsync + Promise.all。
  */
 import { useTranslation } from 'react-i18next';
-import { RefreshCw, TrendingUp, FileText, Clock } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { RefreshCw, TrendingUp, FileText, Clock, ClipboardCheck, CheckCircle2, ArrowRight } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { api } from '@/api/client';
 import { useAsync } from '@/hooks/useAsync';
-import type { DashboardStats, ClassRanking, RecordWithDetails } from '@class-duty/shared';
+import type { DashboardStats, ClassRanking, RecordWithDetails, TodayTask } from '@class-duty/shared';
 
 interface DashData {
   stats: DashboardStats;
@@ -27,6 +33,7 @@ const RECORD_STATUS_LABEL: Record<string, string> = {
 
 export default function DashboardPage() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const { data, loading, reload } = useAsync<DashData>(async () => {
     const [stats, ranking, recent] = await Promise.all([
       api.get<DashboardStats>('/statistics/dashboard'),
@@ -35,6 +42,17 @@ export default function DashboardPage() {
     ]);
     return { stats: stats.data, ranking: ranking.data, recent: recent.data };
   }, []);
+
+  // 我的今日执勤（值班域）——失败不拖垮看板（softFetch 精神）
+  const { data: myTasks } = useAsync<TodayTask[]>(async () => {
+    try {
+      return (await api.get<TodayTask[]>('/duty/checkins/today')).data;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const todoTasks = (myTasks ?? []).filter((x) => !x.checkedIn);
 
   return (
     <div className="space-y-6">
@@ -45,6 +63,33 @@ export default function DashboardPage() {
           {t('common.refresh')}
         </Button>
       </div>
+
+      {/* 我的今日执勤条（改良：值班域上浮到落地页）*/}
+      {(myTasks ?? []).length > 0 && (
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-6">
+            <div className="flex items-center gap-3">
+              <div className="flex size-10 items-center justify-center rounded-full bg-primary/10">
+                <ClipboardCheck className="size-5 text-primary" />
+              </div>
+              <div>
+                <div className="font-medium">{t('duty.checkin.todayTasks')}</div>
+                <div className="text-xs text-muted-foreground">
+                  {todoTasks.length > 0
+                    ? `${todoTasks.length} ${t('duty.checkin.todo')} · ${todoTasks.map((x) => x.locationName).filter(Boolean).join('、')}`
+                    : t('duty.checkin.done')}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {todoTasks.length === 0 && <Badge variant="success" className="gap-1"><CheckCircle2 className="size-3" />{t('duty.checkin.checkedIn')}</Badge>}
+              <Button size="sm" onClick={() => navigate('/duty/checkin')}>
+                {t('nav.dutyCheckin')}<ArrowRight className="size-4" />
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* 4 统计卡 */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
