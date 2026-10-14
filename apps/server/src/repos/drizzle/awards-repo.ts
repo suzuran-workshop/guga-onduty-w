@@ -3,7 +3,7 @@
  *
  * 迁移要点（对照旧 routes/awards.ts）：
  *  - autoAward：复刻「每年级排名第一的班级各颁一面旗」逻辑，计分口径与 statistics 一致
- *    （active+appealing+appeal_approved）。
+ *    （active+appealing；appeal_approved 申诉成立已撤销不计分，REVIEW #1）。
  *  - **幂等**：awards 表有 UNIQUE(campusId,classId,week)，重复调用用 onConflictDoNothing 跳过，
  *    修复旧代码「重复调用产生重复奖项」bug。
  *  - 事务批量 insert；返回本周该校区实际存在的奖项（含此前已颁的，前端看到完整列表）。
@@ -15,7 +15,8 @@ import type { Award } from '@class-duty/shared';
 import type { AwardsRepo } from '../types.js';
 import { DrizzleCtx, whereAll, eqIf, num } from './_base.js';
 
-const SCORED_STATUSES = ['active', 'appealing', 'appeal_approved'];
+// 计分口径与 statistics-repo 一致（REVIEW #1）：appeal_approved=申诉成立撤销，不计分
+const SCORED_STATUSES = ['active', 'appealing'];
 
 function toAward(r: any): Award {
   return {

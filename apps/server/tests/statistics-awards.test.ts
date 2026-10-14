@@ -1,6 +1,6 @@
 /**
  * E2E：统计聚合 + 流动红旗评选。
- * 覆盖：ranking 有效口径（revoked 不计、appeal_approved 计入）、trend 补零、
+ * 覆盖：ranking 有效口径（revoked 不计、appeal_approved 申诉成立撤销不计）、trend 补零、
  *      dashboard epoch 区间判今日、CSV 导出（BOM+转义）、awards 自动评选每年级第一名、
  *      awards 幂等（重复调用不增，修复旧代码无幂等 bug）。
  */
@@ -31,7 +31,7 @@ async function addRecord(classId: string, score: string, week = '2026-W41') {
 }
 
 describe('统计排名 ranking（有效口径）', () => {
-  it('revoked 不计分，appeal_approved 计入', async () => {
+  it('revoked 不计分（撤回的罚分被排除）', async () => {
     // 1班：+5(active) 与 -100(revoked)；后者撤回后不应拉低
     const a = await addRecord(seed.cls1.id, '5');
     const b = await addRecord(seed.cls1.id, '-100');
@@ -86,7 +86,7 @@ describe('统计趋势 trend', () => {
 });
 
 describe('看板 dashboard', () => {
-  it('今日统计用 epoch 区间（含 appeal_approved，修复旧 UTC 边界 bug）', async () => {
+  it('今日统计用 epoch 区间（修复旧 UTC 边界 bug）', async () => {
     const admin = await h.loginAs('admin');
     const r = await admin.req('GET', '/api/v1/statistics/dashboard');
     expect(r.status).toBe(200);

@@ -43,7 +43,8 @@ export function createStatisticsRoutes(deps: RouteDeps): Hono {
     if (!classId) throw ApiError.badRequest('请指定班级');
     const weeks = Number(c.req.query('weeks') || '4') || 4;
     const weekList = recentWeeks(weeks);
-    const trend = await repos.statistics.trend(classId, weekList);
+    // REVIEW #3：传 resolveCampusId，非 admin 强制本校区（旧代码 trend 完全无隔离）
+    const trend = await repos.statistics.trend(resolveCampusId(c), classId, weekList);
     return ok(c, trend);
   });
 

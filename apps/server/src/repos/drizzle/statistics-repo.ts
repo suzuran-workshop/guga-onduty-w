@@ -14,15 +14,23 @@ import type { ClassRanking, TrendPoint, DashboardStats } from '@class-duty/share
 import type { StatisticsRepo } from '../types.js';
 import { DrizzleCtx, whereAll, num } from './_base.js';
 
-/** 有效计分状态口径（单一真源，ranking/trend/dashboard 复用） */
-const SCORED_STATUSES = ['active', 'appealing', 'appeal_approved'];
+/**
+ * 有效计分状态口径（单一真源，ranking/trend/dashboard 复用）。
+ *
+ * ⚠ 语义（REVIEW #1 修正，git 考古 ad886f3 确认）：只有 active + appealing 计分。
+ *  - appealing：申诉中，罚分**暂仍生效**（未裁决前不倒扣）。
+ *  - appeal_approved：申诉**成立** → 记录退出计分 → 罚分被撤销。**这个「排除」正是申诉唯一的生效机制**。
+ *  - revoked：管理员撤回 → 不计分。
+ * 迁移时曾误把 appeal_approved 当 bug「修复」成计分，导致批准申诉后分数照旧、申诉全程无效。已回退。
+ */
+const SCORED_STATUSES = ['active', 'appealing'];
 
 export function createStatisticsRepo(ctx: DrizzleCtx): StatisticsRepo {
   const { tables: T } = ctx;
   const db = ctx.db as any;
   const { records, classes, grades } = T;
 
-  // 计分条件下的分数表达式（active/appealing/appeal_approved 才计入）
+  // 计分条件下的分数表达式（active/appealing 才计入；appeal_approved=申诉成立已撤销、revoked=撤回，均不计）
   const scoredScore = sql<number>`CASE WHEN ${records.status} IN (${sql.raw(SCORED_STATUSES.map((s) => `'${s}'`).join(','))}) THEN ${records.score} ELSE 0 END`;
 
   return {
@@ -72,13 +80,14 @@ export function createStatisticsRepo(ctx: DrizzleCtx): StatisticsRepo {
       }));
     },
 
-    async trend(classId, weeks): Promise<TrendPoint[]> {
+    async trend(campusId, classId, weeks): Promise<TrendPoint[]> {
       if (weeks.length === 0) return [];
       const weekTotal = sql<number>`COALESCE(SUM(${scoredScore}), 0)`;
       const rows = await db
         .select({ week: records.week, totalScore: weekTotal })
         .from(records)
-        .where(and(eq(records.classId, classId), inArray(records.week, weeks)))
+        // REVIEW #3：加 campusId 隔离，杜绝跨校区班级趋势泄漏
+        .where(and(eq(records.campusId, campusId), eq(records.classId, classId), inArray(records.week, weeks)))
         .groupBy(records.week)
         .orderBy(records.week);
 
@@ -89,8 +98,8 @@ export function createStatisticsRepo(ctx: DrizzleCtx): StatisticsRepo {
     },
 
     async dashboard(campusId, dayStart, dayEnd, week): Promise<DashboardStats> {
-      // 今日聚合口径与 ranking 一致：active+appealing+appeal_approved 计入（仅 revoked 排除）。
-      // 修复旧代码今日只数 active 的 bug —— 当日记录被申诉/批准后从看板消失，语义不一致。
+      // 今日聚合口径与 ranking 一致：active+appealing 计入（appeal_approved 申诉成立撤销、revoked 撤回，均不计）。
+      // 与旧代码差异：旧代码今日只数 active，会把「申诉中」的当日记录漏掉；此处纳入 appealing 使口径与排名一致。
       const todayCond = and(
         eq(records.campusId, campusId),
         gte(records.recordedAt, dayStart),

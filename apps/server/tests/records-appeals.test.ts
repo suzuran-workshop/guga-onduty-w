@@ -177,6 +177,47 @@ describe('申诉状态机（事务联动）', () => {
     expect(mine.reviewerId).toBeTruthy();
   });
 
+  // ── REVIEW #1 回归：断言申诉的「业务效果」而非仅状态迁移 ──
+  // 旧缺陷：迁移误把 appeal_approved 计入分，导致批准申诉后分数照旧、approve 与 reject 效果相同。
+  // 这两条测试断言排名总分实际变化，杜绝「状态对了但效果错了」的盲区。
+  it('申诉成立 → 罚分从班级排名中撤销（业务效果，REVIEW #1）', async () => {
+    const admin = await h.loginAs('admin');
+    const stu = await h.loginAs('student1');
+    const created = await stu.req('POST', '/api/v1/records', { body: recordForm(seed.cls1.id, { score: '-7' }), isForm: true });
+    const id = created.json.data.id;
+
+    const rankOf = async () => {
+      const r = await admin.req('GET', '/api/v1/statistics/ranking', { query: { week: '2026-W41' } });
+      return r.json.data.find((x: any) => x.classId === seed.cls1.id)?.totalScore ?? 0;
+    };
+
+    const before = await rankOf();                 // 含 -7
+    const teacher = await h.loginAs('teacher1');
+    await teacher.req('POST', `/api/v1/records/${id}/appeal`, { body: { reason: 'r' } });
+    const duringAppeal = await rankOf();           // appealing 仍计分 → 罚分暂仍生效
+    expect(duringAppeal).toBe(before);
+    await admin.req('POST', `/api/v1/records/${id}/appeal/approve`, { body: { review_comment: '属实' } });
+    const after = await rankOf();                  // appeal_approved 退出计分 → -7 被撤销
+    expect(after).toBe(before + 7);                // ★ 总分回升 7 = 罚分真被撤销
+  });
+
+  it('申诉驳回 → 罚分保留（与批准形成对照，approve≠reject）', async () => {
+    const admin = await h.loginAs('admin');
+    const stu = await h.loginAs('student1');
+    const created = await stu.req('POST', '/api/v1/records', { body: recordForm(seed.cls1.id, { score: '-4' }), isForm: true });
+    const id = created.json.data.id;
+    const rankOf = async () => {
+      const r = await admin.req('GET', '/api/v1/statistics/ranking', { query: { week: '2026-W41' } });
+      return r.json.data.find((x: any) => x.classId === seed.cls1.id)?.totalScore ?? 0;
+    };
+    const teacher = await h.loginAs('teacher1');
+    await teacher.req('POST', `/api/v1/records/${id}/appeal`, { body: { reason: 'r' } });
+    const before = await rankOf();                 // -4 计入（appealing）
+    await admin.req('POST', `/api/v1/records/${id}/appeal/reject`, { body: { review_comment: '证据不足' } });
+    const after = await rankOf();                  // 驳回 → 回滚 active，-4 仍计入
+    expect(after).toBe(before);                    // ★ 罚分保留（与批准的 +7 形成对照）
+  });
+
   it('admin 驳回 → record 回滚 active + appeal rejected', async () => {
     const stu = await h.loginAs('student1');
     const created = await stu.req('POST', '/api/v1/records', { body: recordForm(seed.cls1.id, { score: '-1' }), isForm: true });

@@ -158,15 +158,22 @@ export function createAppealsRepo(ctx: DrizzleCtx): AppealsRepo {
 
     async reject(recordId, reviewerId, reviewComment): Promise<void> {
       await ctx.tx(async (tx: any) => {
-        await tx.update(appeals)
+        // 仅当申诉仍 pending 才处理（防重复审批）
+        const appealRes = await tx.update(appeals)
           .set({ status: 'rejected', reviewerId, reviewComment, reviewedAt: Date.now() })
           .where(and(eq(appeals.recordId, recordId), eq(appeals.status, 'pending'))).run();
-        // 驳回 → record 回滚 active（复刻旧逻辑）
-        await tx.update(records).set({ status: 'active' }).where(eq(records.id, recordId)).run();
-        await tx.insert(recordLogs).values({
-          id: crypto.randomUUID(), recordId, action: 'appeal_reject',
-          operatorId: reviewerId, reason: reviewComment ?? '申诉被驳回',
-        }).run();
+        const appealChanged = Number(appealRes?.changes ?? appealRes?.rowsAffected ?? 1);
+        // REVIEW #4：record 回滚 active 必须带状态前置 `WHERE status='appealing'`——
+        // 否则申诉期间记录已被 admin 撤回(revoked)时，驳回会把已撤回记录「复活」成 active 重新计分。
+        // 状态机：只有 appealing 才回滚；revoked/appeal_approved 为终态，不动。
+        await tx.update(records).set({ status: 'active' })
+          .where(and(eq(records.id, recordId), eq(records.status, 'appealing'))).run();
+        if (appealChanged > 0) {
+          await tx.insert(recordLogs).values({
+            id: crypto.randomUUID(), recordId, action: 'appeal_reject',
+            operatorId: reviewerId, reason: reviewComment ?? '申诉被驳回',
+          }).run();
+        }
       });
     },
   };

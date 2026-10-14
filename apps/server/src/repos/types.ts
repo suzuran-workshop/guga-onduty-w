@@ -140,9 +140,10 @@ export interface SummaryRepo {
 
 // ── 统计 ────────────────────────────────────────────────────────────
 export interface StatisticsRepo {
-  /** 班级排名：有效口径 active+appealing+appeal_approved（修复 appeal_approved 不计分 bug） */
+  /** 班级排名：有效口径 active+appealing（appeal_approved=申诉成立撤销不计分，REVIEW #1） */
   ranking(campusId: string, week?: string, gradeId?: string): Promise<ClassRanking[]>;
-  trend(classId: string, weeks: string[]): Promise<TrendPoint[]>;
+  /** 班级趋势：campusId 强制隔离（REVIEW #3，修复跨校区泄漏） */
+  trend(campusId: string, classId: string, weeks: string[]): Promise<TrendPoint[]>;
   /** dayStart/dayEnd 为当日 epoch 毫秒区间 [start,end)（路由按本地时区算，修复 UTC 边界 bug） */
   dashboard(campusId: string, dayStart: number, dayEnd: number, week: string): Promise<DashboardStats>;
 }
