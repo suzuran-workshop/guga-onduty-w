@@ -1,220 +1,237 @@
-// ============================================================
-// 校园值周应用 - 共享类型定义
-// ============================================================
+/**
+ * 前后端共享类型契约 —— 值周管理领域模型。
+ *
+ * ⚠ 迁移说明（docs/MIGRATION-HOMURA.md §2.2）：
+ *  - 所有实体 id 从 integer 改为 **uuid string**（身份模型统一到 auth SDK 的 uuid 锚点）。
+ *  - 字段一律 **camelCase**，与 drizzle schema / PostgREST 列名 / API wire 三者一致，消除映射层。
+ *  - 用户拆分为 `User`（auth 身份锚点：id/username/nickname/avatarUrl）+
+ *    `UserProfile`（业务档案：campusId/role/displayName/groupId）。
+ *  - 时间戳统一 epoch 毫秒（number）。
+ */
 
-// --- 角色 ---
+// ── 枚举（与 server/src/schema/enums.ts 单一真源对齐）──────────────────
 export type UserRole = 'admin' | 'teacher' | 'student';
-
-// --- 记录状态 ---
 export type RecordStatus = 'active' | 'revoked' | 'appealing' | 'appeal_approved';
-
-// --- 申诉状态 ---
 export type AppealStatus = 'pending' | 'approved' | 'rejected';
-
-// --- 标签分类 ---
 export type TagCategory = 'positive' | 'negative' | 'neutral';
+export type RecordAction = 'create' | 'revoke' | 'appeal' | 'appeal_approve' | 'appeal_reject';
 
-// --- 记录操作 ---
-export type RecordAction = 'revoke' | 'appeal' | 'appeal_approve' | 'appeal_reject';
-
-// --- 校区 ---
+// ── 实体 ────────────────────────────────────────────────────────────
 export interface Campus {
-  id: number;
+  id: string;
   name: string;
   code: string;
-  created_at: string;
+  createdAt: number;
 }
 
-// --- 年级 ---
 export interface Grade {
-  id: number;
-  campus_id: number;
+  id: string;
+  campusId: string;
   name: string;
-  sort_order: number;
+  sortOrder: number;
+  campusName?: string;
 }
 
-// --- 班级 ---
 export interface Class {
-  id: number;
-  grade_id: number;
-  campus_id: number;
+  id: string;
+  gradeId: string;
+  campusId: string;
   name: string;
-  class_teacher: string | null;
-  grade_name?: string;
+  classTeacher: string | null;
+  gradeName?: string;
+  campusName?: string;
 }
 
-// --- 用户 ---
+/** auth SDK 身份锚点（users 表） */
 export interface User {
-  id: number;
-  campus_id: number;
-  username: string;
-  display_name: string;
+  id: string;
+  username: string | null;
+  nickname: string | null;
+  avatarUrl: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** 业务档案（userProfiles 表）——「你能做什么」 */
+export interface UserProfile {
+  userId: string;
+  campusId: string;
+  displayName: string;
   role: UserRole;
-  group_id: number | null;
-  created_at: string;
+  groupId: string | null;
 }
 
-export interface UserWithPassword extends User {
-  password_hash: string;
+/** 列表页返回的用户视图（身份 + 档案 + 关联名） */
+export interface UserView {
+  id: string;
+  username: string | null;
+  campusId: string;
+  displayName: string;
+  role: UserRole;
+  groupId: string | null;
+  groupName: string | null;
+  campusName: string;
+  createdAt: number;
 }
 
-// --- 值周小组 ---
 export interface DutyGroup {
-  id: number;
-  campus_id: number;
+  id: string;
+  campusId: string;
   name: string;
-  members: string; // JSON array of user IDs
-  created_at: string;
+  /** 成员 userId(uuid) 数组 */
+  members: string[] | null;
+  createdAt: number;
 }
 
-// --- 评价标签 ---
 export interface Tag {
-  id: number;
-  campus_id: number;
+  id: string;
+  campusId: string;
   name: string;
   score: number;
   color: string;
   category: TagCategory;
-  is_system: boolean;
-  created_at: string;
+  isSystem: number;
+  createdAt: number;
 }
 
-// --- 标签模板 ---
 export interface Template {
-  id: number;
-  campus_id: number;
+  id: string;
+  campusId: string;
   name: string;
-  tag_ids: string; // JSON array of tag IDs
-  created_at: string;
+  /** tag id(uuid) 数组 */
+  tagIds: string[];
+  createdAt: number;
+  /** 展开的标签（列表接口附带） */
+  tags?: Tag[];
 }
 
-// --- 值周记录 ---
 export interface Record {
-  id: number;
-  campus_id: number;
-  class_id: number;
-  recorder_id: number;
-  tag_id: number | null;
+  id: string;
+  campusId: string;
+  classId: string;
+  recorderId: string;
+  tagId: string | null;
   score: number | null;
   comment: string | null;
-  images: string | null; // JSON array of file paths
+  /** 图片 storage objectKey 数组；读取走 /files/<key> 代理 */
+  images: string[] | null;
   week: string;
-  recorded_at: string;
   status: RecordStatus;
+  recordedAt: number;
 }
 
 export interface RecordWithDetails extends Record {
-  class_name: string;
-  grade_name: string;
-  recorder_name: string;
-  tag_name: string | null;
-  tag_color: string | null;
+  className: string;
+  gradeName: string;
+  recorderName: string;
+  tagName: string | null;
+  tagColor: string | null;
 }
 
-// --- 申诉 ---
 export interface Appeal {
-  id: number;
-  record_id: number;
-  teacher_id: number;
+  id: string;
+  recordId: string;
+  teacherId: string;
   reason: string;
   status: AppealStatus;
-  reviewer_id: number | null;
-  review_comment: string | null;
-  created_at: string;
-  reviewed_at: string | null;
+  reviewerId: string | null;
+  reviewComment: string | null;
+  createdAt: number;
+  reviewedAt: number | null;
+}
+
+export interface AppealRecordInfo {
+  score: number | null;
+  comment: string | null;
+  week: string;
+  recordedAt: number;
+  recordStatus: RecordStatus;
+  className: string;
+  tagName: string | null;
 }
 
 export interface AppealWithDetails extends Appeal {
-  teacher_name: string;
-  reviewer_name: string | null;
-  record_info: {
-    class_name: string;
-    tag_name: string;
-    score: number;
-    comment: string | null;
-    week: string;
-    recorded_at: string;
-  };
+  teacherName: string;
+  reviewerName: string | null;
+  recordInfo: AppealRecordInfo | null;
 }
 
-// --- 操作日志 ---
 export interface RecordLog {
-  id: number;
-  record_id: number;
+  id: string;
+  recordId: string;
   action: RecordAction;
-  operator_id: number;
+  operatorId: string;
   reason: string | null;
-  created_at: string;
+  createdAt: number;
 }
 
-// --- 每日小结 ---
 export interface DailySummary {
-  id: number;
-  campus_id: number;
+  id: string;
+  campusId: string;
   week: string;
   date: string;
   content: string;
-  notified_teachers: string | null;
-  created_at: string;
+  notifiedTeachers: string[] | null;
+  createdAt: number;
 }
 
-// --- 流动红旗 ---
 export interface Award {
-  id: number;
-  campus_id: number;
-  class_id: number;
+  id: string;
+  campusId: string;
+  classId: string;
   week: string;
   category: string;
   note: string | null;
-  awarded_at: string;
-  class_name?: string;
-  grade_name?: string;
+  awardedAt: number;
+  className?: string;
+  gradeName?: string;
 }
 
-// --- 系统设置 ---
 export interface Setting {
-  id: number;
-  campus_id: number;
+  id: string;
+  campusId: string;
   key: string;
   value: string;
 }
 
-// --- 统计数据 ---
+// ── 统计 ────────────────────────────────────────────────────────────
 export interface ClassRanking {
   rank: number;
-  class_id: number;
-  class_name: string;
-  grade_id: number;
-  grade_name: string;
-  total_score: number;
-  positive_count: number;
-  negative_count: number;
-  record_count: number;
+  classId: string;
+  className: string;
+  gradeId: string;
+  gradeName: string;
+  totalScore: number;
+  positiveCount: number;
+  negativeCount: number;
+  recordCount: number;
 }
 
 export interface TrendPoint {
   week: string;
-  total_score: number;
+  totalScore: number;
 }
 
 export interface DashboardStats {
-  today_records: number;
-  today_positive: number;
-  today_negative: number;
-  week_top_class: string | null;
-  week_top_score: number | null;
+  todayRecords: number;
+  todayPositive: number;
+  todayNegative: number;
+  weekTopClass: string | null;
+  weekTopScore: number | null;
 }
 
-// --- API 响应 ---
+// ── API 契约 ────────────────────────────────────────────────────────
+export interface Pagination {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
 export interface ApiResponse<T> {
   success: true;
   data: T;
-  pagination?: {
-    page: number;
-    pageSize: number;
-    total: number;
-    totalPages: number;
-  };
+  pagination?: Pagination;
 }
 
 export interface ApiError {
@@ -228,59 +245,73 @@ export interface ApiError {
 
 export type ApiResult<T> = ApiResponse<T> | ApiError;
 
-// --- JWT Payload ---
-export interface JwtPayload {
-  sub: number;
-  username: string;
-  display_name: string;
-  role: UserRole;
-  campus_id: number;
-  iat?: number;
-  exp?: number;
-}
-
-// --- 请求体类型 ---
+// ── 请求体 ──────────────────────────────────────────────────────────
 export interface LoginRequest {
   username: string;
   password: string;
 }
 
-export interface LoginResponse {
-  token: string;
+/** GET /api/v1/auth/me —— 身份 + 档案 + 校区名 */
+export interface MeResponse {
   user: User;
+  profile: UserProfile;
+  campusName: string;
+}
+
+export interface CreateUserRequest {
+  campusId: string;
+  username: string;
+  password?: string;
+  displayName: string;
+  role: UserRole;
+  groupId?: string | null;
+}
+
+export interface UpdateUserRequest {
+  displayName: string;
+  role: UserRole;
+  groupId?: string | null;
 }
 
 export interface CreateRecordRequest {
-  class_id: number;
-  tag_id: number;
-  score: number;
-  comment?: string;
+  classId: string;
+  tagId?: string | null;
+  score?: number;
+  comment?: string | null;
+  week: string;
 }
 
 export interface CreateAppealRequest {
-  record_id: number;
   reason: string;
 }
 
 export interface AppealReviewRequest {
-  review_comment?: string;
+  reviewComment?: string | null;
 }
 
 export interface CreateSummaryRequest {
-  campus_id: number;
   week: string;
   date: string;
   content: string;
-  notified_teachers?: number[];
+  notifiedTeachers?: string[] | null;
 }
 
 export interface AwardRequest {
-  campus_id: number;
   week: string;
-  grade_id?: number;
+  gradeId?: string | null;
 }
 
 export interface PaginationParams {
   page?: number;
   pageSize?: number;
+}
+
+// ── SSE 事件 ────────────────────────────────────────────────────────
+export interface RecordCreatedEvent {
+  recordId: string;
+  className: string;
+  tagName: string | null;
+  points: number;
+  timestamp: number;
+  campusId: string;
 }
