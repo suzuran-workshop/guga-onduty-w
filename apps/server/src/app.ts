@@ -14,6 +14,7 @@
  */
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
+import { bodyLimit } from 'hono/body-limit';
 import { createApp } from '@homurajs/app-kit';
 import type { HomuraApp } from '@homurajs/app-kit';
 import type { Logger } from '@homurajs/core';
@@ -50,6 +51,15 @@ export function buildApp(opts: BuildAppOptions): HomuraApp {
   const business = new Hono();
   // CORS 仅作用于业务/文件路由（SDK auth 路由的 cookie 由 sessionMiddleware 处理）
   business.use('*', cors({ origin: corsOrigins, credentials: true }));
+  // REVIEW #17：全局请求体上限 50MB（图片上传 9×5MB=45MB + 余量）。
+  // 修复：旧代码图片全量进内存、无 bodyLimit，并发大上传可耗尽内存（DoS）。
+  business.use('*', bodyLimit({
+    maxSize: 50 * 1024 * 1024,
+    onError: () => Response.json(
+      { success: false, error: { code: 'PAYLOAD_TOO_LARGE', message: '请求体超过 50MB 上限' } },
+      { status: 413 },
+    ),
+  }));
   business.route('/', buildApiRoutes({ repos, storage, auth }));
   // /files/<key> 代理下载（createFileProxyRoutes 内部已注册 /files/:key，故挂根路径 '/'）
   // objectKey 为 uuid 前缀不可猜；<img> 同源自动带 cookie。修复旧代码图片死数据 bug。

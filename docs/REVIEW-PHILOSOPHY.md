@@ -133,8 +133,62 @@
 桥接只能用 (campusId, recorderId, 当日) 匹配——够用于报表口径，但不是强关联。是否给 records 加
 可选 scheduleId 外键（强关联但侵入值周域 schema），留待主人定夺（这是「不断改良」的下一个决策点）。
 
-## 5. 值周域对抗性审查
+## 5. 值周域对抗性审查结果（fork，实测 + git 考古双重验证）
 
-值班域审毕，同一怀疑视角转向**值周域**（71 E2E 但从未经对抗性审查）：多校区隔离 / RBAC 完整性 /
-事务边界（尤其 appeal 状态机）/ 统计口径 / 流动红旗幂等 / N+1 / SSE / 身份双表非原子性 / 输入校验。
-结论见 §6（待 fork 回报）。
+同一怀疑视角转向**值周域**（71 E2E 但从未经对抗性审查）。报 **17 项**，其中 4 个 P1（含一个
+**我迁移时亲手引入的功能回归**）、6 个 P2、7 个 P3。处置：
+
+| # | 级别 | 缺陷 | 处置 |
+|---|------|------|------|
+| 1 | **P1** | **申诉工作流完全失效**：迁移时误把 `appeal_approved` 计入分，导致批准申诉后分数照旧、approve≡reject、申诉全程无效 | ✅ git 考古 ad886f3 确认原始口径 `['active','appealing']`，回退；+2 测试断言**业务效果**（approve 后排名总分回升、reject 保留罚分），补上「只断言状态迁移」的盲区 |
+| 3 | P1 | `/statistics/trend` 无 campusId → teacher1(c1) 可查 c2 班级真实扣分（跨校区泄漏） | ✅ 签名加 campusId + repo 过滤 + 路由 resolveCampusId；+2 测试（隔离+admin不误伤） |
+| 2 | P1 | 删用户致其记录静默消失（records `innerJoin(userProfiles)`）+ count/rows 分歧 + CSV 丢行 | ✅ 改 `leftJoin` + recorderName COALESCE('已删除用户')；+2 测试 |
+| 4 | P1 | 撤回记录被 reject 复活（reject 无条件 set active）+ revoke 无状态前置 | ✅ reject 加 `WHERE status='appealing'`；revoke 加 `WHERE status IN(active,appealing)`+幂等 log；+2 测试 |
+| 6 | P2 | records score 零校验（'abc'→null、'1e308'→Infinity 撑爆 SUM）、tagId 不校验校区 | ✅ Number.isFinite+范围±100、tagId 本校区校验；+5 测试 |
+| 8 | P2 | campuses/grades/classes DELETE 无引用守卫（homura 无 DB FK → 孤儿子行） | ✅ 删前查引用有则 409（与值班域 #12 一致）；+4 测试 |
+| 7 | P2 | settings PUT 任意 key（semester_start 现驱动单双周锚点，写错静默错乱） | ✅ key 白名单 + 值校验；+5 测试 |
+| 9 | P2 | appeals GET /:id 无校区校验（靠「id 只能来自已隔离列表」兜底，脆弱） | ✅ 投影带 records.campusId → 非 admin 强制本校区 404；+2 测试 |
+| 5 | P2 | /files 跨校区图片泄漏（实测：匿名401 但 student2(c2) 读 c1 图 200） | ✅ 命名空间校区限定 + /files 鉴权中间件（O(1) 按 key 段隔离，fail-closed）；+2 测试 |
+| 10 | P2 | records.list count(单表) vs rows(4表join) 结构分歧 → 幻影分页 | ✅ 由 #2 的 leftJoin 从根上消除（rows 不再因 join 落空而少于 count）；#8 的班级删除守卫堵住另一入口 |
+| 11 | P3 | revoke 可重复撤回 + 推翻 appeal_approved | ✅ 由 #4 的状态前置一并修复 |
+| 17 | P3 | 图片上传全量进内存（9×5MB=45MB/请求）+ 无 bodyLimit → 并发可耗尽内存 | ✅ 见 §6（bodyLimit 中间件） |
+| 12 | P3 | users.remove 非原子无回滚（profile 删了但 auth user 删失败 → 账号变砖） | ✅ 见 §6（补对称回滚） |
+| 13 | P3 | templates.importMany 静默丢弃跨校区 tagId（值班域 Excel 导入是收集 warnings 的，两域不一致） | ⏸️ deferred：返回 imported 计数，非静默数据损坏；对齐 warnings 是增强非修复 |
+| 14 | P3 | appeals-repo 重复构造 cond/countCond（可维护性） | ⏸️ deferred：纯代码整洁，无行为影响 |
+| 15 | P3 | groups.assertOwnership 为校验一个 id 加载全校区组（O(n)） | ⏸️ deferred：校内组数量小（个位数），O(n) 无实际影响；补 findById 是 API 一致性增强 |
+| 16 | P3 | EventBus setMaxListeners(200)：>200 并发 SSE 触发告警（静默悬崖） | ⏸️ deferred：校内并发远低于 200；多实例部署本就要改 Redis Pub/Sub（见 ARCHITECTURE 边界） |
+
+**审查同时确认无误的关键实现**（新鲜视角复核）：
+- **RBAC 12 个洞真补全了**：grep 全部路由确认 grades/classes/groups/tags/templates/summary/awards/settings/users/campuses 写端点都有 requireRole（summary 为 admin+teacher）。
+- **事务边界严谨**：records create、appeal 三写、groups 双写、awards 批量+onConflict、templates import、settings upsert 全在 ctx.tx 内。旧代码「状态改了但无申诉单 → appealing 永远无法 approve」的 bug 确实修复（实测同事务）。
+- **重复申诉/审批防护**：appeals.create 有 WHERE status='active'、approve/reject 有 WHERE status='pending'，实测有效。
+- **isUniqueViolation 正确遍历 .cause 链**（drizzle 包成 DrizzleQueryError，真实 UNIQUE 在 cause），users 重名→409 实测通过。
+- **N+1 修复彻底**：templates attachTags 一次 inArray、appeals list 单 join 投影，无新 N+1。
+- **CSV 转义**全字段双引号+BOM（旧「只转义 comment」bug 已修）；**SSE record_revoked 真被 emit**（旧死代码复活）；**onError 不泄栈** + kitLogger 把预期 4xx 降级 warn。
+
+**最重要的教训（#1）**：我在迁移时把「appeal_approved 不计分」当成 bug「修复」了，注释还写得理直气壮，
+轻松通过了自己的 code review 和 71 个 E2E——因为那些测试只断言「approve 后 status 变 appeal_approved」
+（状态对了），从未断言「分数被撤销」（效果错了）。**状态断言通过 ≠ 语义正确**。这类回归只能靠
+① 业务效果的数值断言、② 对拍原始行为（git 考古）发现。已补两类测试。这也印证了主人要求
+「判断每个功能的哲学价值」的深意：功能的价值在于它产生的**业务效果**，而非它经过的**状态**。
+
+**回归**：每项修复配断言，值周 E2E 71→ 全套 **202 tests 绿**（新增 records-appeals +2、wk-review +22）。
+
+## 6. 值周审查后的剩余改良（本轮）
+
+- **#17 bodyLimit**：图片上传 9×5MB 全量进内存、无请求体上限 → 加 hono `bodyLimit` 中间件（全局防 DoS）。
+- **#12 users.remove 原子性**：profile 删成功但 auth user 删失败 → 账号变砖（auth user 在、profile 不在，
+  requireProfile 永久 403）且 username 被占。补对称回滚（对齐 create 的补偿清理模式）。
+
+## 7. 两域健壮性对比（审查结论）
+
+| 维度 | 值周域 | 值班域 |
+|------|--------|--------|
+| 事务原子性 | **更强**（appeal 三写、groups 双写同事务） | Excel 导入配置预建仍不在事务内（#9 值班，deferred） |
+| 引用完整性 | 迁移后补齐（#8 删除守卫） | 一开始就有（#12 值班） |
+| 授权一致性 | trend 曾漏隔离（#3，已修） | by-id 写端点曾整片漏（值班 #3，已修） |
+| 打卡/履职状态 | — | 按人判定（值班 #2，会签不串台） |
+| 测试盲区 | 曾只测角色维度、缺业务效果断言（#1 教训） | 审查后补同角色跨主体越权 |
+
+两域经交叉审查后健壮性已对齐。共同的最大教训：**授权与语义的正确性，靠 happy-path + 角色维度测试测不出来**，
+必须补「同角色跨主体越权」和「业务效果数值断言」两类测试。

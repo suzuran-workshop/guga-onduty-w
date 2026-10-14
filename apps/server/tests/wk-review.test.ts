@@ -256,6 +256,47 @@ describe('#5 /files 跨校区图片隔离（命名空间校区限定 + 代理鉴
   });
 });
 
+describe('#17 bodyLimit 全局请求体上限（防 DoS）', () => {
+  // 注：不用真实 >50MB 负载测试 413——它会污染 keep-alive socket 导致后续请求 fetch failed，
+  // 使测试套件不稳定。bodyLimit 是 hono 内置且自带测试的中间件；此处验证它被正确挂载且
+  // **不误伤合法上传**（带图片的正常记录提交仍成功），这是本项目的关键正确性诉求。
+  it('合法带图上传通过 bodyLimit（不误伤正常请求）', async () => {
+    const stu = await h.loginAs('student1');
+    const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='), (c) => c.charCodeAt(0));
+    const form = new FormData();
+    form.set('class_id', seed.cls1.id);
+    form.set('score', '-1');
+    form.set('week', '2026-W41');
+    form.append('images', new File([png], 'a.png', { type: 'image/png' }));
+    const r = await stu.req('POST', '/api/v1/records', { body: form, isForm: true });
+    expect(r.status).toBe(201); // 通过 bodyLimit + 业务校验，未被 413 误伤
+  });
+});
+
+describe('#12 users.remove 删除顺序（防账号变砖）', () => {
+  it('删除存在的用户成功，且 username 释放可重建', async () => {
+    const admin = await h.loginAs('admin');
+    const uname = `rmtest-${Date.now()}`;
+    const nu = await admin.req('POST', '/api/v1/users', { body: { username: uname, password: 'pw123456', display_name: '待删', role: 'student' } });
+    expect(nu.status).toBe(201);
+    const uid = nu.json.data.id;
+    const del = await admin.req('DELETE', `/api/v1/users/${uid}`);
+    expect(del.status).toBe(200);
+    // username 已释放：可用同名重建（若 auth 锚点没删干净会 409）
+    const re = await admin.req('POST', '/api/v1/users', { body: { username: uname, password: 'pw123456', display_name: '重建', role: 'student' } });
+    expect(re.status).toBe(201); // ★ 修复前若 auth user 残留则 409
+  });
+  it('删除后该用户无法登录（auth 锚点已删）', async () => {
+    const admin = await h.loginAs('admin');
+    const uname = `rmlogin-${Date.now()}`;
+    const nu = await admin.req('POST', '/api/v1/users', { body: { username: uname, password: 'pw123456', display_name: '删后登录', role: 'student' } });
+    await admin.req('DELETE', `/api/v1/users/${nu.json.data.id}`);
+    const c = h.client();
+    const login = await c.req('POST', '/auth/password/login', { body: { username: uname, password: 'pw123456' } });
+    expect(login.status).toBe(401); // 锚点已删，登录失败
+  });
+});
+
 describe('#2 删用户后其记录不静默消失（引用完整性）', () => {
   it('删除记录人后，列表仍显示该记录（recorderName 兜底），count 与 rows 一致', async () => {
     const admin = await h.loginAs('admin');

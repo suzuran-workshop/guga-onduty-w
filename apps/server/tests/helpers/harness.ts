@@ -68,9 +68,26 @@ export interface Harness {
   shutdown(): Promise<void>;
 }
 
-/** 启动测试服务（独立 sqlite 文件 + 端口） */
+/** 随机端口（避开 OS ephemeral 区间常见段，取 30000-45000） */
+function randomPort(): number {
+  return 30000 + Math.floor(Math.random() * 15000);
+}
+
+/** 判断是否端口占用错误（EADDRINUSE） */
+function isAddrInUse(e: unknown): boolean {
+  const code = (e as any)?.code ?? (e as any)?.cause?.code;
+  return code === 'EADDRINUSE';
+}
+
+/**
+ * 启动测试服务（独立 sqlite 文件 + 端口）。
+ *
+ * ⚠ 端口冲突重试：boot() 在各测试文件的 beforeAll 里调用，若 adapter.start 撞上已被占用的
+ * 随机端口（EADDRINUSE），beforeAll 抛错会导致**整个文件加载失败**（全部用例 skipped），
+ * 表现为偶发的 flaky 套件。故此处对端口绑定做重试（最多 5 次，每次换端口）。
+ */
 export async function boot(tag: string, opts?: { port?: number }): Promise<Harness> {
-  const port = opts?.port ?? 30000 + Math.floor(Math.random() * 20000);
+  let port = opts?.port ?? randomPort();
   const DB = join(__dirname, `../../data/test-${tag}-${Date.now()}-${Math.floor(Math.random() * 1e6)}.db`);
   const FILES = join(__dirname, `../../data/test-files-${tag}-${Date.now()}`);
   rmSync(DB, { force: true });
@@ -87,7 +104,31 @@ export async function boot(tag: string, opts?: { port?: number }): Promise<Harne
   const adapter = createNodeAdapter();
   const booted = await bootstrap({ secure: false, staticDir: undefined, loginPath: '/login' });
   const ac = new AbortController();
-  await adapter.start(booted.homura.app, { port, signal: ac.signal });
+
+  // 端口冲突重试（EADDRINUSE → 换端口重试；显式指定 opts.port 时不重试，直接暴露问题）
+  let started = false;
+  for (let attempt = 0; attempt < 5 && !started; attempt++) {
+    try {
+      await adapter.start(booted.homura.app, { port, signal: ac.signal });
+      started = true;
+    } catch (e) {
+      if (isAddrInUse(e) && opts?.port === undefined) {
+        port = randomPort();
+        process.env.PORT = String(port);
+        continue;
+      }
+      // 非端口冲突错误，或显式端口：清理后抛出
+      booted.shutdown();
+      rmSync(DB, { force: true });
+      throw e;
+    }
+  }
+  if (!started) {
+    booted.shutdown();
+    rmSync(DB, { force: true });
+    throw new Error(`boot(${tag}): 5 次尝试后仍无法绑定端口`);
+  }
+
   // 等端口就绪
   for (let i = 0; i < 40; i++) {
     try {

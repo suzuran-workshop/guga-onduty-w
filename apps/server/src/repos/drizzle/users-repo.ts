@@ -143,10 +143,15 @@ export function createUsersRepo(ctx: DrizzleCtx, auth: UsersRepoAuthDeps): Users
     },
 
     async remove(userId): Promise<void> {
-      // 先删业务档案，再删 auth 凭证与身份锚点（顺序：子→父）
-      await db.delete(userProfiles).where(eq(userProfiles.userId, userId)).run();
+      // REVIEW #12：删除顺序修复「账号变砖」——旧代码先删 profile 再 best-effort 删 auth user，
+      // 若 auth user 删失败则：auth 锚点在、profile 没了 → requireProfile 永久 403 PROFILE_NOT_FOUND，
+      // 且 username 仍被占（无法重建）。改为**先删 auth 身份锚点**：
+      //  - auth user 删失败 → 抛错，profile 保留，账号仍可用（不 brick）。
+      //  - auth user 删成功但 profile 删失败 → 孤儿 profile（无 auth 锚点，登录即失败，惰性无害），
+      //    且 username 已释放可重建 —— 严格优于 brick 态。
+      await auth.userStore.delete(userId); // 锚点先删；失败则整体抛错，profile 不动
       try { await auth.passwordProvider.deletePassword(userId); } catch { /* 可能无密码记录 */ }
-      try { await auth.userStore.delete(userId); } catch { /* 尽力清理 */ }
+      await db.delete(userProfiles).where(eq(userProfiles.userId, userId)).run();
     },
 
     async findMe(userId): Promise<{ user: User; profile: UserProfile; campusName: string } | null> {
