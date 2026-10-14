@@ -12,14 +12,20 @@
  */
 import { and, eq, sql, type SQL } from 'drizzle-orm';
 import type { Database, DrizzleQueryable } from '@homurajs/db';
+import type { sqliteAuthTables } from '@homurajs/auth/tables';
 import type { Tables } from '../../db/client.js';
 import type { Pagination } from '@class-duty/shared';
+
+/** auth SDK 5 表的规范类型（以 sqlite 侧为准；pg 侧装配时 cast，parity 保证列一致） */
+export type AuthTables = typeof sqliteAuthTables;
 
 export interface DrizzleCtx {
   /** 真实 drizzle 实例（联合类型，repo 内 as any 用其完整 query builder） */
   db: Database;
-  /** 方言匹配的表对象（parity 保证 sqlite/pg 列名一致） */
+  /** 方言匹配的业务表对象（parity 保证 sqlite/pg 列名一致） */
   tables: Tables;
+  /** 方言匹配的 auth SDK 表（users 身份锚点等；users-repo join 用） */
+  authTables: AuthTables;
   /** 事务包装（统一 await，屏蔽 sqlite 同步 / pg 异步差异） */
   tx<T>(fn: (tx: any) => Promise<T>): Promise<T>;
 }
