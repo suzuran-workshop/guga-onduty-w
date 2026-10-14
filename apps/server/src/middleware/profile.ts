@@ -18,6 +18,7 @@ import type { Context, Next, MiddlewareHandler } from 'hono';
 import type { SessionClaims } from '@homurajs/auth';
 import type { UserProfile, UserRole } from '@class-duty/shared';
 import type { UsersRepo } from '../repos/types.js';
+import { ApiError } from '../http/respond.js';
 
 declare module 'hono' {
   interface ContextVariableMap {
@@ -89,4 +90,22 @@ export function resolveWriteCampusId(c: Context, bodyCampusId?: string | null): 
   const profile = getProfile(c);
   if (profile.role === 'admin' && bodyCampusId) return bodyCampusId;
   return profile.campusId;
+}
+
+/**
+ * 实体归属校验（共享）—— 修复值班域 by-id 写端点整片漏掉校区校验（REVIEW #3）。
+ *
+ * 语义（与值周域 assertOwnership 一致，此处抽成单一真源消除 5× 重复）：
+ *  - 实体不存在 → 404。
+ *  - 非 admin 且实体不属本人校区 → 404（不泄露跨校区实体存在性）。
+ *  - admin 可跨校区（resolveWriteCampusId 语义一致）。
+ * 返回实体本身，便于链式：const x = assertEntityOwnership(c, await repo.findById(id))。
+ */
+export function assertEntityOwnership<T extends { campusId: string }>(c: Context, entity: T | null, label = '资源'): T {
+  if (!entity) throw ApiError.notFound(label + '不存在');
+  const profile = getProfile(c);
+  if (profile.role !== 'admin' && entity.campusId !== profile.campusId) {
+    throw ApiError.notFound(label + '不存在');
+  }
+  return entity;
 }

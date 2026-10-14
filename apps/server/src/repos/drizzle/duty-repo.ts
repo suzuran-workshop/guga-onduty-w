@@ -85,6 +85,10 @@ export function createDutyRepos(ctx: DrizzleCtx): DutyRepos {
       const rows = await db.select().from(dutyAreas).where(eq(dutyAreas.campusId, campusId)).orderBy(asc(dutyAreas.sortOrder), asc(dutyAreas.name));
       return rows.map((r: any) => ({ id: r.id, campusId: r.campusId, name: r.name, sortOrder: num(r.sortOrder) }));
     },
+    async findById(id): Promise<DutyArea | null> {
+      const rows = await db.select().from(dutyAreas).where(eq(dutyAreas.id, id)).limit(1);
+      return rows[0] ? { id: rows[0].id, campusId: rows[0].campusId, name: rows[0].name, sortOrder: num(rows[0].sortOrder) } : null;
+    },
     async create(input): Promise<DutyArea> {
       const id = crypto.randomUUID();
       await db.insert(dutyAreas).values({ id, campusId: input.campusId, name: input.name, sortOrder: input.sortOrder ?? 0 }).run();
@@ -141,6 +145,11 @@ export function createDutyRepos(ctx: DrizzleCtx): DutyRepos {
         endMinute: r.endMinute == null ? null : num(r.endMinute),
         priority: num(r.priority),
       }));
+    },
+    async findById(id): Promise<DutyTimeSlot | null> {
+      const rows = await db.select().from(dutyTimeSlots).where(eq(dutyTimeSlots.id, id)).limit(1);
+      const r = rows[0];
+      return r ? { id: r.id, campusId: r.campusId, areaId: r.areaId, name: r.name, startMinute: r.startMinute == null ? null : num(r.startMinute), endMinute: r.endMinute == null ? null : num(r.endMinute), priority: num(r.priority) } : null;
     },
     async create(input): Promise<DutyTimeSlot> {
       const id = crypto.randomUUID();

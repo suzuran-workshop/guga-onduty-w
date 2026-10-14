@@ -14,7 +14,7 @@
  */
 import { Hono } from 'hono';
 import type { RouteDeps } from './_deps.js';
-import { getProfile, requireRole, resolveCampusId, resolveWriteCampusId } from '../middleware/profile.js';
+import { getProfile, requireRole, resolveCampusId, resolveWriteCampusId, assertEntityOwnership } from '../middleware/profile.js';
 import { ok, created, ApiError, parsePagination, isUniqueViolation } from '../http/respond.js';
 import { getWeekMatrix, getTodayTasks, getAttendance } from '../duty/service.js';
 import { mondayOf, dateKey, weekDates, startOfDay, parseDate } from '../duty/date.js';
@@ -48,11 +48,45 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
   const { repos } = deps;
   const app = new Hono();
 
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  /**
+   * 日期参数校验（REVIEW #7）：非法格式（如 2026/09/02、abc）会经 parseDate 变 Invalid Date，
+   * 导致展开循环不执行、静默返回空矩阵/空统计（200）。此处显式 400，让用户看到错误而非「本周无排班」。
+   * @param optional=true 时，undefined/空串放过（用默认值）；provided 则必须是 YYYY-MM-DD。
+   */
+  function assertDateParam(label: string, value: string | null | undefined, optional = false): string | undefined {
+    if (value === undefined || value === null || value === '') {
+      if (optional) return undefined;
+      throw ApiError.badRequest(`缺少 ${label}`);
+    }
+    if (!DATE_RE.test(value)) throw ApiError.badRequest(`${label} 格式非法（应 YYYY-MM-DD）：${value}`);
+    return value;
+  }
+
+  /**
+   * 本人班次守卫（共用）—— 展开某排班在某日的实例 + 叠加已批准调班 → 实际值班人名单。
+   * 打卡与调班发起共用此逻辑（REVIEW #1：修复 /swaps 注释声称校验本人值班、代码却漏掉的洞）。
+   * @returns sched=null 表示排班不存在；assignees=null 表示该日不匹配排班（周内日/单双周/区间）
+   */
+  async function resolveDutyGuard(scheduleId: string, date: string, campusId: string):
+    Promise<{ sched: Awaited<ReturnType<typeof repos.duty.schedules.findById>>; assignees: string[] | null }> {
+    const sched = await repos.duty.schedules.findById(scheduleId);
+    if (!sched) return { sched: null, assignees: null };
+    const day = parseDate(date);
+    const insts = expandSchedules([sched], { from: day, to: day });
+    if (insts.length === 0) return { sched, assignees: null };
+    const approved = await repos.duty.swaps.listApproved(campusId);
+    const users = await repos.users.list(campusId);
+    const userNames = new Map(users.map((u) => [u.id, u.displayName]));
+    const inst = applySwapOverlay(insts, buildSwapOverlay(approved), userNames)[0];
+    return { sched, assignees: inst.effectiveAssigneeIds ?? inst.assigneeIds };
+  }
+
   // ══════════ 值班大表矩阵（核心视图，所有角色可读）══════════
   // GET /matrix?week=YYYY-MM-DD(周内任意日)&kind=&area_id=
   app.get('/matrix', async (c) => {
     const campusId = resolveCampusId(c);
-    const weekParam = c.req.query('week');
+    const weekParam = assertDateParam('week', c.req.query('week'), true);
     const anchor = weekParam ? parseDate(weekParam) : new Date();
     const kind = c.req.query('kind') as DutyKind | undefined;
     const areaId = c.req.query('area_id') || undefined;
@@ -64,7 +98,7 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
   // GET /checkins/today —— 今日我的执勤任务（打卡工作台）
   app.get('/checkins/today', async (c) => {
     const profile = getProfile(c);
-    const dateParam = c.req.query('date');
+    const dateParam = assertDateParam('date', c.req.query('date'), true);
     const date = dateParam ? parseDate(dateParam) : new Date();
     const tasks = await getTodayTasks({ repos }, profile.campusId, profile.userId, date);
     return ok(c, tasks);
@@ -75,8 +109,8 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
     const profile = getProfile(c);
     const { page, pageSize } = parsePagination(c);
     const r = await repos.duty.checkins.listByTeacher(profile.userId, {
-      dateFrom: c.req.query('date_from') || undefined,
-      dateTo: c.req.query('date_to') || undefined,
+      dateFrom: assertDateParam('date_from', c.req.query('date_from'), true),
+      dateTo: assertDateParam('date_to', c.req.query('date_to'), true),
       page, pageSize,
     });
     return ok(c, r.data, r.pagination);
@@ -90,28 +124,19 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
     const dutyDate = String(form.get('duty_date') ?? '');
     const situation = form.get('situation') ? String(form.get('situation')) : null;
     if (!scheduleId || !dutyDate) throw ApiError.badRequest('缺少 schedule_id 或 duty_date');
+    assertDateParam('duty_date', dutyDate);
 
     // 照片必填≥1（对齐外部 PRD：打卡强制照片）
     const photoFiles = form.getAll('photos').filter((f): f is File => f instanceof File && f.size > 0);
     if (photoFiles.length === 0) throw ApiError.badRequest('执勤照片必填（至少 1 张）');
 
-    // 校验：本人班次守卫（精确到被打卡的排班实例的实际值班人，防越权代打卡）
-    const sched = await repos.duty.schedules.findById(scheduleId);
-    if (!sched) throw ApiError.notFound('排班不存在');
-    if (sched.campusId !== profile.campusId) throw ApiError.forbidden('不能跨校区打卡');
-    // 展开该排班在 dutyDate 的实例，叠加调班，确认本人是实际值班人
-    const day = parseDate(dutyDate);
-    const insts = expandSchedules([sched], { from: day, to: day });
-    if (insts.length === 0) throw ApiError.badRequest('该日期无此排班（不匹配周内日/单双周/区间）');
-    const approved = await repos.duty.swaps.listApproved(profile.campusId);
-    const users = await repos.users.list(profile.campusId);
-    const userNames = new Map(users.map((u) => [u.id, u.displayName]));
-    const effective = applySwapOverlay(insts, buildSwapOverlay(approved), userNames);
-    const inst = effective[0];
-    const assignees = inst.effectiveAssigneeIds ?? inst.assigneeIds;
-    if (!assignees.includes(profile.userId)) {
-      throw ApiError.forbidden('非本人班次，不能打卡');
-    }
+    // 校验：本人班次守卫（共用 resolveDutyGuard，精确到叠加调班后的实际值班人，防越权代打卡）
+    const guard = await resolveDutyGuard(scheduleId, dutyDate, profile.campusId);
+    if (!guard.sched) throw ApiError.notFound('排班不存在');
+    if (guard.sched.campusId !== profile.campusId) throw ApiError.forbidden('不能跨校区打卡');
+    if (guard.assignees === null) throw ApiError.badRequest('该日期无此排班（不匹配周内日/单双周/区间）');
+    if (!guard.assignees.includes(profile.userId)) throw ApiError.forbidden('非本人班次，不能打卡');
+    const sched = guard.sched;
 
     // 取地点/时段名快照
     const loc = sched.locationId ? await repos.duty.locations.findById(sched.locationId) : null;
@@ -140,7 +165,8 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
       throw ApiError.forbidden('无巡查权限');
     }
     const form = await c.req.formData();
-    const inspectDate = String(form.get('inspect_date') ?? dateKey(new Date()));
+    const inspectDateRaw = form.get('inspect_date');
+    const inspectDate = assertDateParam('inspect_date', inspectDateRaw ? String(inspectDateRaw) : null, true) ?? dateKey(new Date());
     const areaId = String(form.get('area_id') ?? '');
     if (!areaId) throw ApiError.badRequest('缺少 area_id');
     // items 以 JSON 字符串传（子表：地点×教师×在岗状态），照片单独 multipart
@@ -203,11 +229,15 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
     if (!body.reason || !body.reason.trim()) throw ApiError.badRequest('调班原因不能为空');
     if (body.type !== 'swap' && body.type !== 'proxy') throw ApiError.badRequest('调班类型非法');
     if (body.target_id === profile.userId) throw ApiError.badRequest('不能选自己为对方');
+    assertDateParam('applicant_date', body.applicant_date);
+    if (body.target_date) assertDateParam('target_date', body.target_date);
 
-    // 校验申请人排班属于本人校区 + 本人是该排班的实际值班人
-    const apSched = await repos.duty.schedules.findById(body.applicant_schedule_id);
-    if (!apSched) throw ApiError.notFound('申请人排班不存在');
-    if (apSched.campusId !== profile.campusId) throw ApiError.forbidden('不能跨校区调班');
+    // 校验申请人排班属于本人校区 + 本人是该排班在 applicant_date 的实际值班人（REVIEW #1，与打卡守卫同源）
+    const apGuard = await resolveDutyGuard(body.applicant_schedule_id, body.applicant_date, profile.campusId);
+    if (!apGuard.sched) throw ApiError.notFound('申请人排班不存在');
+    if (apGuard.sched.campusId !== profile.campusId) throw ApiError.forbidden('不能跨校区调班');
+    if (apGuard.assignees === null) throw ApiError.badRequest('该日期无此排班（不匹配周内日/单双周/区间）');
+    if (!apGuard.assignees.includes(profile.userId)) throw ApiError.forbidden('非本人班次，不能发起调班');
 
     // 交换需对方排班
     if (body.type === 'swap' && !body.target_schedule_id) throw ApiError.badRequest('交换调班需指定对方排班');
@@ -258,9 +288,9 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
   // GET /attendance?date_from=&date_to=&kind=
   app.get('/attendance', async (c) => {
     const campusId = resolveCampusId(c);
-    const dateFrom = c.req.query('date_from');
-    const dateTo = c.req.query('date_to');
-    if (!dateFrom || !dateTo) throw ApiError.badRequest('需 date_from 与 date_to');
+    // assertDateParam(optional=false) 要么抛错要么返回非空串，故 ! 安全
+    const dateFrom = assertDateParam('date_from', c.req.query('date_from'))!;
+    const dateTo = assertDateParam('date_to', c.req.query('date_to'))!;
     const kind = c.req.query('kind') as DutyKind | undefined;
     const stats = await getAttendance({ repos }, campusId, dateFrom, dateTo, kind);
     return ok(c, stats);
@@ -279,11 +309,15 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
   app.put('/areas/:id', requireRole('admin'), async (c) => {
     const b = await c.req.json<{ name: string; sort_order?: number }>().catch(() => null as any);
     if (!b?.name) throw ApiError.badRequest('缺少 name');
+    assertEntityOwnership(c, await repos.duty.areas.findById(c.req.param('id')), '区域');
     const r = await repos.duty.areas.update(c.req.param('id'), { name: b.name, sortOrder: b.sort_order });
     if (!r) throw ApiError.notFound('区域不存在');
     return ok(c, r);
   });
-  app.delete('/areas/:id', requireRole('admin'), async (c) => { await repos.duty.areas.remove(c.req.param('id')); return ok(c, { deleted: true }); });
+  app.delete('/areas/:id', requireRole('admin'), async (c) => {
+    assertEntityOwnership(c, await repos.duty.areas.findById(c.req.param('id')), '区域');
+    await repos.duty.areas.remove(c.req.param('id')); return ok(c, { deleted: true });
+  });
 
   // 地点
   app.get('/locations', async (c) => ok(c, await repos.duty.locations.listByCampus(resolveCampusId(c), c.req.query('area_id') || undefined)));
@@ -297,11 +331,15 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
   app.put('/locations/:id', requireRole('admin'), async (c) => {
     const b = await c.req.json<{ name: string; area_id?: string }>().catch(() => null as any);
     if (!b?.name) throw ApiError.badRequest('缺少 name');
+    assertEntityOwnership(c, await repos.duty.locations.findById(c.req.param('id')), '地点');
     const r = await repos.duty.locations.update(c.req.param('id'), { name: b.name, areaId: b.area_id });
     if (!r) throw ApiError.notFound('地点不存在');
     return ok(c, r);
   });
-  app.delete('/locations/:id', requireRole('admin'), async (c) => { await repos.duty.locations.remove(c.req.param('id')); return ok(c, { deleted: true }); });
+  app.delete('/locations/:id', requireRole('admin'), async (c) => {
+    assertEntityOwnership(c, await repos.duty.locations.findById(c.req.param('id')), '地点');
+    await repos.duty.locations.remove(c.req.param('id')); return ok(c, { deleted: true });
+  });
 
   // 时段
   app.get('/time-slots', async (c) => ok(c, await repos.duty.timeSlots.listByCampus(resolveCampusId(c), c.req.query('area_id') || undefined)));
@@ -315,13 +353,17 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
   });
   app.put('/time-slots/:id', requireRole('admin'), async (c) => {
     const b = await c.req.json<{ name?: string; start_minute?: number; end_minute?: number; priority?: number }>().catch(() => null as any);
+    assertEntityOwnership(c, await repos.duty.timeSlots.findById(c.req.param('id')), '时段');
     const r = await repos.duty.timeSlots.update(c.req.param('id'), {
       name: b?.name, startMinute: b?.start_minute, endMinute: b?.end_minute, priority: b?.priority,
     });
     if (!r) throw ApiError.notFound('时段不存在');
     return ok(c, r);
   });
-  app.delete('/time-slots/:id', requireRole('admin'), async (c) => { await repos.duty.timeSlots.remove(c.req.param('id')); return ok(c, { deleted: true }); });
+  app.delete('/time-slots/:id', requireRole('admin'), async (c) => {
+    assertEntityOwnership(c, await repos.duty.timeSlots.findById(c.req.param('id')), '时段');
+    await repos.duty.timeSlots.remove(c.req.param('id')); return ok(c, { deleted: true });
+  });
 
   // ══════════ 排班模板（admin）══════════
   app.get('/schedules', async (c) => {
@@ -352,6 +394,7 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
     return created(c, s);
   });
   app.put('/schedules/:id', requireRole('admin'), async (c) => {
+    assertEntityOwnership(c, await repos.duty.schedules.findById(c.req.param('id')), '排班');
     const b = await c.req.json<any>().catch(() => null);
     const patch: any = {};
     if (b?.area_id !== undefined) patch.areaId = b.area_id;
@@ -368,7 +411,10 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
     if (!r) throw ApiError.notFound('排班不存在');
     return ok(c, r);
   });
-  app.delete('/schedules/:id', requireRole('admin'), async (c) => { await repos.duty.schedules.remove(c.req.param('id')); return ok(c, { deleted: true }); });
+  app.delete('/schedules/:id', requireRole('admin'), async (c) => {
+    assertEntityOwnership(c, await repos.duty.schedules.findById(c.req.param('id')), '排班');
+    await repos.duty.schedules.remove(c.req.param('id')); return ok(c, { deleted: true });
+  });
 
   // ── Excel 排班导入（admin，叠加合并语义）──
   // multipart：file=<xlsx>；缺失的区域/地点/时段自动创建；教师姓名同名匹配通讯录。
@@ -386,12 +432,14 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
     const campusId = resolveWriteCampusId(c, String(form.get('campus_id') || '') || null);
 
     // 2. 区域/地点/时段：按名解析为 id，缺失自动创建（叠加合并）
+    //    ⚠ 地点/时段的唯一约束是 (campusId, areaId, name)，故 map 键含 areaId（REVIEW #6：
+    //    同名地点跨区域不可合并，否则两个区域的「校门口」会串成一行）。
     const areas = await repos.duty.areas.listByCampus(campusId);
     const areaByName = new Map(areas.map((a) => [a.name, a.id]));
     const locs = await repos.duty.locations.listByCampus(campusId);
-    const locByName = new Map(locs.map((l) => [l.name, l.id]));
+    const locByScoped = new Map(locs.map((l) => [`${l.areaId}|${l.name}`, l.id]));
     const slots = await repos.duty.timeSlots.listByCampus(campusId);
-    const slotByName = new Map(slots.map((s) => [s.name, s.id]));
+    const slotByScoped = new Map(slots.map((s) => [`${s.areaId}|${s.name}`, s.id]));
 
     async function ensureArea(name: string): Promise<string> {
       const hit = areaByName.get(name);
@@ -401,24 +449,35 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
       return a.id;
     }
     async function ensureLocation(name: string, areaId: string): Promise<string> {
-      const hit = locByName.get(name);
+      const key = `${areaId}|${name}`;
+      const hit = locByScoped.get(key);
       if (hit) return hit;
       const l = await repos.duty.locations.create({ campusId, areaId, name });
-      locByName.set(name, l.id);
+      locByScoped.set(key, l.id);
       return l.id;
     }
     async function ensureSlot(name: string, areaId: string): Promise<string | null> {
       if (!name) return null;
-      const hit = slotByName.get(name);
+      const key = `${areaId}|${name}`;
+      const hit = slotByScoped.get(key);
       if (hit) return hit;
-      const s = await repos.duty.timeSlots.create({ campusId, areaId, name, priority: slotByName.size });
-      slotByName.set(name, s.id);
+      const s = await repos.duty.timeSlots.create({ campusId, areaId, name, priority: slotByScoped.size });
+      slotByScoped.set(key, s.id);
       return s.id;
     }
 
     // 3. 教师姓名 → userId（同名匹配通讯录）
+    //    ⚠ REVIEW #10：重名教师（两个「张伟」）不能静默取最后一个，须告警提示人工核对。
     const users = await repos.users.list(campusId);
-    const userByName = new Map(users.map((u) => [u.displayName, u.id]));
+    const userByName = new Map<string, string>();
+    const dupNames = new Set<string>();
+    for (const u of users) {
+      if (userByName.has(u.displayName)) dupNames.add(u.displayName);
+      else userByName.set(u.displayName, u.id);
+    }
+    if (dupNames.size > 0) {
+      warnings.push(`通讯录存在重名教师：${Array.from(dupNames).join('、')}，已按其一匹配，请人工核对（建议用工号导入）`);
+    }
 
     // 4. 预建所有出现的区域/地点/时段，再 buildScheduleRows（解析器同步）
     for (const r of rows) {
@@ -430,8 +489,8 @@ export function createDutyRoutes(deps: RouteDeps): Hono {
       rows, campusId,
       {
         area: (n) => areaByName.get(n),
-        location: (n) => locByName.get(n),
-        timeSlot: (n) => slotByName.get(n),
+        location: (n, areaId) => locByScoped.get(`${areaId}|${n}`),
+        timeSlot: (n, areaId) => slotByScoped.get(`${areaId}|${n}`),
         teacher: (n) => userByName.get(n),
       },
       warnings,

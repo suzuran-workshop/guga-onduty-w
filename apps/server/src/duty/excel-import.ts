@@ -15,11 +15,26 @@ import * as XLSX from 'xlsx';
 import type { DutyScheduleRow, WeekParity } from './types.js';
 import { dateKey } from './date.js';
 
-/** Excel 序列号 → 本地 YYYY-MM-DD（1900 date system，含闰年 bug 补偿） */
+/**
+ * Excel 序列号 → YYYY-MM-DD（1900 date system）。
+ *
+ * ⚠ 修复 REVIEW #5：旧实现用 `new Date(ms)`（UTC 瞬时）再读本地 getFullYear/Month/Date，
+ *   在西区时区（UTC-x）会 off-by-one（UTC 午夜 = 本地前一日）。此处用 **UTC getter**
+ *   读取（Excel 序列号本就是无时区的「日历日」计数），与部署时区无关，恒定正确。
+ *
+ * 已知边界：Excel 1900 系统有个历史 bug——它错误地把 1900 当闰年，序列号 60 = 虚构的
+ *   1900-02-29。故序列号 < 60（即 1900-03-01 之前）本公式会差一天。值班排班日期恒为
+ *   现代日期（序列号 ~46000），永不触及此边界，无需补偿（补偿反而会弄错现代日期）。
+ */
 export function excelSerialToDate(serial: number): string {
-  // Excel epoch: 1899-12-30（补偿 1900 闰年 bug）
+  // Excel epoch: 1899-12-30（补偿 1900 闰年 bug）；ms 为 UTC 午夜瞬时
   const ms = Math.round((serial - 25569) * 86400 * 1000);
-  return dateKey(new Date(ms));
+  const d = new Date(ms);
+  // 用 UTC getter（序列号是纯日历日计数，不含时区语义）
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 /** 单元格值 → YYYY-MM-DD（兼容 Excel 序列号 / 已是日期串 / Date） */
@@ -194,21 +209,25 @@ export type NameResolver = (name: string) => string | undefined;
  * @param resolveTeacher 教师名 → userId
  * @param campusId 目标校区
  */
+/** 区域限定的名字解析器（location/timeSlot 的唯一约束是 campusId+areaId+name，故需 areaId 上下文，REVIEW #6） */
+export type ScopedNameResolver = (name: string, areaId: string) => string | undefined;
+
 export function buildScheduleRows(
   rows: ParsedRow[],
   campusId: string,
   resolve: {
-    area: NameResolver; location: NameResolver; timeSlot: NameResolver; teacher: NameResolver;
+    area: NameResolver; location: ScopedNameResolver; timeSlot: ScopedNameResolver; teacher: NameResolver;
   },
   warnings: string[],
 ): Omit<DutyScheduleRow, 'id'>[] {
   const out: Omit<DutyScheduleRow, 'id'>[] = [];
   for (const r of rows) {
     const areaId = resolve.area(r.areaName);
-    const locationId = resolve.location(r.locationName);
     if (!areaId) { warnings.push(`第${r.rowNo}行 区域「${r.areaName}」未找到，已跳过`); continue; }
+    // location/timeSlot 按 (name, areaId) 解析，避免同名地点跨区域被合并成一行
+    const locationId = resolve.location(r.locationName, areaId);
     if (!locationId) { warnings.push(`第${r.rowNo}行 地点「${r.locationName}」未找到，已跳过`); continue; }
-    const timeSlotId = r.timeSlotName ? (resolve.timeSlot(r.timeSlotName) ?? null) : null;
+    const timeSlotId = r.timeSlotName ? (resolve.timeSlot(r.timeSlotName, areaId) ?? null) : null;
     const assigneeIds: string[] = [];
     for (const name of r.teacherNames) {
       const uid = resolve.teacher(name);

@@ -73,9 +73,11 @@ export function buildMatrix(
       for (const inst of insts) {
         const assignees = inst.effectiveAssigneeIds ?? inst.assigneeIds;
         for (const uid of assignees) {
-          // 叠加命中该实例 → 实际值班人是接手人，显示 swapped 态（青紫），履职状态以接手后为准，不计 done。
-          // 无叠加 → 按本人是否打卡判定 done/pending。
-          const swapped = Boolean(inst.swapApplied);
+          // ⚠ swapped 必须**按人**判定，不能按实例（否则同格会签同事的打卡状态被抹掉，
+          //   大表显示未执勤、到岗率报表却算已执勤 → 两处口径矛盾，见 REVIEW #2）。
+          //   只有叠加「换进来」的接手人（不在原名单 originalIds 中）才是 swapped 态；
+          //   原班留守的会签同事照常按本人打卡判 done/pending。
+          const swapped = inst.swapApplied != null && !inst.swapApplied.originalIds.includes(uid);
           const done = !swapped && doneChecker.isCheckedIn(inst.scheduleId, inst.date, uid);
           const state: MatrixPill['state'] = swapped ? 'swapped' : done ? 'done' : 'pending';
           pills.push({

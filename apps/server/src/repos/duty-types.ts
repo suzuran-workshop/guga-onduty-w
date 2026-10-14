@@ -29,6 +29,7 @@ export interface DutyTimeSlot {
 
 export interface DutyAreaRepo {
   listByCampus(campusId: string): Promise<DutyArea[]>;
+  findById(id: string): Promise<DutyArea | null>;
   create(input: { campusId: string; name: string; sortOrder?: number }): Promise<DutyArea>;
   update(id: string, input: { name: string; sortOrder?: number }): Promise<DutyArea | null>;
   remove(id: string): Promise<void>;
@@ -44,6 +45,7 @@ export interface DutyLocationRepo {
 
 export interface DutyTimeSlotRepo {
   listByCampus(campusId: string, areaId?: string): Promise<DutyTimeSlot[]>;
+  findById(id: string): Promise<DutyTimeSlot | null>;
   create(input: { campusId: string; areaId: string; name: string; startMinute?: number | null; endMinute?: number | null; priority?: number }): Promise<DutyTimeSlot>;
   update(id: string, input: { name?: string; startMinute?: number | null; endMinute?: number | null; priority?: number }): Promise<DutyTimeSlot | null>;
   remove(id: string): Promise<void>;
