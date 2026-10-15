@@ -7,7 +7,7 @@
  *  - members 存 userId(uuid) 数组；回填 userProfiles.groupId 用 inArray 批量 update（非循环单条）。
  */
 import { eq, and, asc, inArray, sql } from 'drizzle-orm';
-import type { DutyGroup } from '@class-duty/shared';
+import type { DutyGroup } from '@guga-onduty-w/shared';
 import type { GroupsRepo } from '../types.js';
 import { DrizzleCtx, num } from './_base.js';
 

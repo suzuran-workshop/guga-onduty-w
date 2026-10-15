@@ -30,9 +30,7 @@ export function createSettingRoutes(deps: RouteDeps): Hono {
     if (!body?.settings || !Array.isArray(body.settings)) {
       throw ApiError.badRequest('缺少 settings 数组');
     }
-    // REVIEW #7：key 白名单 + 值校验。semester_start 现驱动值班单双周锚点（resolveParityAnchor），
-    // 写错值会让全校单双周判定错乱且静默；bool 类键限定 'true'/'false'。
-    const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+    // REVIEW #7：key 白名单 + 值校验（bool 类键限定 'true'/'false'）。
     const validated: { key: string; value: string }[] = [];
     for (const e of body.settings) {
       const key = String(e?.key ?? '');
@@ -44,13 +42,8 @@ export function createSettingRoutes(deps: RouteDeps): Hono {
             throw ApiError.badRequest(`${key} 须为 'true'/'false'，收到：${value}`);
           }
           break;
-        case 'semester_start':
-          if (!DATE_RE.test(value)) {
-            throw ApiError.badRequest(`semester_start 须为 YYYY-MM-DD，收到：${value}`);
-          }
-          break;
         default:
-          throw ApiError.badRequest(`未知设置项：${key}（白名单：appeal_enabled/auto_notify_teachers/semester_start）`);
+          throw ApiError.badRequest(`未知设置项：${key}（白名单：appeal_enabled/auto_notify_teachers）`);
       }
       validated.push({ key, value });
     }

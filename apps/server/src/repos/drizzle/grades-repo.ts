@@ -3,7 +3,7 @@
  * 迁移要点（对照旧 routes/grades.ts）：id 为 uuid；listByCampus join campuses 取 campusName，orderBy sortOrder。
  */
 import { asc, eq } from 'drizzle-orm';
-import type { Grade } from '@class-duty/shared';
+import type { Grade } from '@guga-onduty-w/shared';
 import type { GradesRepo } from '../types.js';
 import { DrizzleCtx, num } from './_base.js';
 

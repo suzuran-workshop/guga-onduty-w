@@ -45,3 +45,20 @@
 - **背景**：需同时支持中文（日常使用）和英文（演示/国际化）
 - **决策**：i18next + react-i18next，资源文件内联于 `src/i18n/index.ts`
 - **后果**：新增文案需同步中英文 key；当前仅有 zh-CN 和 en 两种语言
+## ADR-6：拆出独立值班仓库（本仓库聚焦值周）
+- **日期**：2026-10-15
+- **状态**：已采纳
+- **背景**：本仓库原为「值班 / 值周二合一」（`guga-onduty-w`）。融合方案把「教师执勤（粗粒度巡查）」
+  与「值周生班级打分（细粒度巡查）」统一为同一套巡查业务，技术上同表同引擎。但对客户而言仍是**两个场景**
+  （不同用户、不同试点节奏、不同交付物），合一仓库带来发布/部署耦合、命名混淆、跨域桥接难以独立演进。
+- **决策**：拆为两个独立仓库——
+  - 本仓库 `guga-onduty-w` 聚焦**值周域**（值周生班级打分：记录/标签/统计/申诉/红旗/大屏），包名 `@guga-onduty-w/*`；
+  - 值班域（教师巡查校园地点：区域/排班/打卡/巡查/调班/矩阵/到岗率）迁至 `guga-onduty` 仓库，包名 `@guga-onduty/*`。
+- **关键处理**：
+  - 值周 13 表保留；值班 7 表（dutyAreas/Locations/TimeSlots/Schedules/Checkins/Inspections/Swaps）移除
+    （迁移 `DROP TABLE`）。
+  - `userProfiles.canInspect` 列随值班迁出（迁移 `DROP COLUMN`）；`settings.semester_start` 键移出白名单。
+  - 移除改良A桥接：`RecordsRepo.listRecorderActivity` 删除（原供值班到岗率读值周 records）。
+  - `docs/DUTY-FUSION.md` 移至值班仓库（作为其值班引擎设计文档）。
+- **后果**：两仓库共享同一底座骨架（@homurajs + drizzle + shadcn），代码高度相似但产品边界清晰。
+- **何时重新审视**：若未来需要两产品数据打通（统一大屏汇总两域），可评估跨服务只读 API。

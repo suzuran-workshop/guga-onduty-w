@@ -5,7 +5,7 @@
  * onError（app.ts）用 ApiError 类统一转 JSON，不泄堆栈。
  */
 import type { Context } from 'hono';
-import type { Pagination } from '@class-duty/shared';
+import type { Pagination } from '@guga-onduty-w/shared';
 
 /** 业务错误：带 HTTP 状态码 + 错误码 + 中文消息（onError 统一转 JSON） */
 export class ApiError extends Error {

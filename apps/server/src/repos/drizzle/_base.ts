@@ -14,7 +14,7 @@ import { and, eq, sql, type SQL } from 'drizzle-orm';
 import type { Database, DrizzleQueryable } from '@homurajs/db';
 import type { sqliteAuthTables } from '@homurajs/auth/tables';
 import type { Tables } from '../../db/client.js';
-import type { Pagination } from '@class-duty/shared';
+import type { Pagination } from '@guga-onduty-w/shared';
 
 /** auth SDK 5 表的规范类型（以 sqlite 侧为准；pg 侧装配时 cast，parity 保证列一致） */
 export type AuthTables = typeof sqliteAuthTables;

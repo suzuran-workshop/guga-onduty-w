@@ -1,14 +1,14 @@
 {
-  "name": "class-manual-scanning",
+  "name": "guga-onduty-w",
   "private": true,
   "scripts": {
     "dev": "pnpm -r dev",
-    "dev:server": "pnpm --filter @class-duty/server dev",
-    "dev:server:qw": "pnpm --filter @class-duty/server dev:qw",
-    "dev:web": "pnpm --filter @class-duty/web dev",
+    "dev:server": "pnpm --filter @guga-onduty-w/server dev",
+    "dev:server:qw": "pnpm --filter @guga-onduty-w/server dev:qw",
+    "dev:web": "pnpm --filter @guga-onduty-w/web dev",
     "build": "pnpm -r build",
-    "db:seed": "pnpm --filter @class-duty/server seed",
-    "db:generate": "pnpm --filter @class-duty/server db:generate",
+    "db:seed": "pnpm --filter @guga-onduty-w/server seed",
+    "db:generate": "pnpm --filter @guga-onduty-w/server db:generate",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck"
   }

@@ -16,7 +16,7 @@
  */
 import type { Context, Next, MiddlewareHandler } from 'hono';
 import type { SessionClaims } from '@homurajs/auth';
-import type { UserProfile, UserRole } from '@class-duty/shared';
+import type { UserProfile, UserRole } from '@guga-onduty-w/shared';
 import type { UsersRepo } from '../repos/types.js';
 import { ApiError } from '../http/respond.js';
 

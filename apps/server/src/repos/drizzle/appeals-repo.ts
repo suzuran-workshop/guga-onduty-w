@@ -10,7 +10,7 @@
  *  - teacher 只看自己的（teacherId 过滤）；campusId 过滤补齐（旧代码 student/admin 看全局）。
  */
 import { eq, and, desc, sql, isNull } from 'drizzle-orm';
-import type { Appeal, AppealWithDetails, AppealRecordInfo } from '@class-duty/shared';
+import type { Appeal, AppealWithDetails, AppealRecordInfo } from '@guga-onduty-w/shared';
 import type { AppealsRepo, Paged } from '../types.js';
 import { DrizzleCtx, whereAll, eqIf, paginate, num } from './_base.js';
 

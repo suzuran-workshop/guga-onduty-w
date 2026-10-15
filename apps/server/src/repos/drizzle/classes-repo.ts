@@ -6,7 +6,7 @@
  *  - findOwnership 只取 {campusId, gradeId}，供记录创建时确定校区归属（campusId 取自 class 而非请求体）。
  */
 import { asc, eq } from 'drizzle-orm';
-import type { Class } from '@class-duty/shared';
+import type { Class } from '@guga-onduty-w/shared';
 import type { ClassesRepo } from '../types.js';
 import { DrizzleCtx, whereAll, eqIf } from './_base.js';
 

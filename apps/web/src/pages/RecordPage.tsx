@@ -24,7 +24,7 @@ import { api } from '@/api/client';
 import { useAuth } from '@/hooks/useAuth';
 import { getCurrentWeek, formatTime } from '@/lib/week';
 import { cn } from '@/lib/utils';
-import type { Tag, Class, Template, RecordWithDetails, Pagination, RecordStatus } from '@class-duty/shared';
+import type { Tag, Class, Template, RecordWithDetails, Pagination, RecordStatus } from '@guga-onduty-w/shared';
 
 const STATUS_VARIANT: Record<RecordStatus, 'success' | 'secondary' | 'warning' | 'default'> = {
   active: 'success',

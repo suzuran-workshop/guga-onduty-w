@@ -12,7 +12,7 @@ import { Hono } from 'hono';
 import type { RouteDeps } from './_deps.js';
 import { requireRole, resolveWriteCampusId } from '../middleware/profile.js';
 import { ok, created, ApiError, isUniqueViolation } from '../http/respond.js';
-import type { UserRole } from '@class-duty/shared';
+import type { UserRole } from '@guga-onduty-w/shared';
 
 const VALID_ROLES: UserRole[] = ['admin', 'teacher', 'student'];
 
@@ -35,7 +35,7 @@ export function createUserRoutes(deps: RouteDeps): Hono {
   app.post('/', async (c) => {
     const body = await c.req.json<{
       campus_id?: string; username: string; password?: string;
-      display_name: string; role: UserRole; group_id?: string | null; can_inspect?: boolean;
+      display_name: string; role: UserRole; group_id?: string | null;
     }>().catch(() => null as any);
     if (!body?.username || !body.display_name || !body.role) {
       throw ApiError.badRequest('缺少 username / display_name / role');
@@ -52,7 +52,6 @@ export function createUserRoutes(deps: RouteDeps): Hono {
         displayName: body.display_name,
         role: body.role,
         groupId: body.group_id ?? null,
-        canInspect: body.can_inspect ? 1 : 0,
       });
       return created(c, user);
     } catch (e) {
@@ -64,16 +63,15 @@ export function createUserRoutes(deps: RouteDeps): Hono {
     }
   });
 
-  // PUT /:id —— 改档案（displayName/role/groupId/canInspect）
+  // PUT /:id —— 改档案（displayName/role/groupId）
   app.put('/:id', async (c) => {
-    const body = await c.req.json<{ display_name: string; role: UserRole; group_id?: string | null; can_inspect?: boolean }>().catch(() => null as any);
+    const body = await c.req.json<{ display_name: string; role: UserRole; group_id?: string | null }>().catch(() => null as any);
     if (!body?.display_name || !body.role) throw ApiError.badRequest('缺少 display_name / role');
     if (!VALID_ROLES.includes(body.role)) throw ApiError.badRequest('role 非法');
     const user = await repos.users.update(c.req.param('id'), {
       displayName: body.display_name,
       role: body.role,
       groupId: body.group_id ?? null,
-      canInspect: body.can_inspect === undefined ? undefined : (body.can_inspect ? 1 : 0),
     });
     if (!user) throw ApiError.notFound('用户不存在');
     return ok(c, user);

@@ -12,7 +12,7 @@ import type { Context } from 'hono';
 import type { RouteDeps } from './_deps.js';
 import { getProfile, requireRole, resolveCampusId, resolveWriteCampusId } from '../middleware/profile.js';
 import { ok, created, ApiError } from '../http/respond.js';
-import type { DutyGroup } from '@class-duty/shared';
+import type { DutyGroup } from '@guga-onduty-w/shared';
 
 /** 校验组归属（非 admin 只能操作本校区组）；返回该组或抛 404 */
 async function assertOwnership(c: Context, repos: RouteDeps['repos'], id: string): Promise<DutyGroup> {

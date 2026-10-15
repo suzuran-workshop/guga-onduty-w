@@ -8,7 +8,7 @@
  *  - 统一解包 {success,data,pagination}；success:false 抛 ApiError。
  *  - 401 → 清状态 + 跳登录（由 useAuth 处理，这里只抛）。
  */
-import type { ApiResponse, ApiError as ApiErrorBody, Pagination } from '@class-duty/shared';
+import type { ApiResponse, ApiError as ApiErrorBody, Pagination } from '@guga-onduty-w/shared';
 
 export class ApiClientError extends Error {
   constructor(

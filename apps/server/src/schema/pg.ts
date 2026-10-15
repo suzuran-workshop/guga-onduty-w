@@ -20,11 +20,6 @@ import {
   RECORD_ACTIONS,
   sqlInList,
 } from './enums.js';
-import {
-  dutyAreas, dutyLocations, dutyTimeSlots, dutySchedules,
-  dutyCheckins, dutyInspections, dutySwaps,
-} from './pg.duty.js';
-export { dutyAreas, dutyLocations, dutyTimeSlots, dutySchedules, dutyCheckins, dutyInspections, dutySwaps };
 
 /** 引用列（NOT NULL uuid）—— 引用另一表的 uuid 主键，完整性由 repo 层保证 */
 const ref = (name: string) => uuid(name).notNull();
@@ -98,8 +93,6 @@ export const userProfiles = pgTable(
     displayName: pgCol.text('displayName').notNull(),
     role: pgCol.text('role').notNull(),
     groupId: optRef('groupId'),
-    /** 领导巡查权限（0/1）：teacher 且被授权者可巡查在岗（DUTY-FUSION §1） */
-    canInspect: pgCol.int('canInspect').notNull().default(0),
   },
   (t) => [
     check('user_profiles_role_check', sql`role IN (${sql.raw(sqlInList(ROLES))})`),
@@ -271,12 +264,4 @@ export const pgBusinessSchema = {
   dailySummaries,
   awards,
   settings,
-  // ── 值班域（融合方案，docs/DUTY-FUSION.md §2）──
-  dutyAreas,
-  dutyLocations,
-  dutyTimeSlots,
-  dutySchedules,
-  dutyCheckins,
-  dutyInspections,
-  dutySwaps,
 };

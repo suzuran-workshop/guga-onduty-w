@@ -14,7 +14,7 @@ import type { Context } from 'hono';
 import type { RouteDeps } from './_deps.js';
 import { getProfile, requireRole, resolveCampusId, resolveWriteCampusId } from '../middleware/profile.js';
 import { ok, created, ApiError } from '../http/respond.js';
-import type { Template } from '@class-duty/shared';
+import type { Template } from '@guga-onduty-w/shared';
 
 function assertOwnership(c: Context, tpl: Template | null): Template {
   if (!tpl) throw ApiError.notFound('模板不存在');

@@ -6,7 +6,6 @@
  * @homurajs/auth/tables，本文件仅供迁移生成，不参与运行时查询。
  */
 export * from './pg.js';
-export * from './pg.duty.js';
 import { pgAuthTables } from '@homurajs/auth/tables';
 
 // auth SDK 5 表（具名导出供 drizzle-kit 识别）

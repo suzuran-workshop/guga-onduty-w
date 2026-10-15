@@ -20,7 +20,7 @@ import { api } from '@/api/client';
 import { useAuth } from '@/hooks/useAuth';
 import { formatTime } from '@/lib/week';
 import { cn } from '@/lib/utils';
-import type { AppealWithDetails, AppealStatus } from '@class-duty/shared';
+import type { AppealWithDetails, AppealStatus } from '@guga-onduty-w/shared';
 
 const STATUS_VARIANT: Record<AppealStatus, 'warning' | 'success' | 'destructive'> = {
   pending: 'warning',

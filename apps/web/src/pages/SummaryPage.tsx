@@ -20,7 +20,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { api } from '@/api/client';
 import { getCurrentWeek } from '@/lib/week';
 import { cn } from '@/lib/utils';
-import type { DailySummary, ClassRanking } from '@class-duty/shared';
+import type { DailySummary, ClassRanking } from '@guga-onduty-w/shared';
 
 function rankBadgeClass(rank: number): string {
   if (rank === 1) return 'bg-yellow-500 text-yellow-950';

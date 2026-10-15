@@ -6,7 +6,7 @@
  *  - create 显式给 id；createdAt 走 schema default。date/week/content/campusId 必填。
  */
 import { desc, eq } from 'drizzle-orm';
-import type { DailySummary } from '@class-duty/shared';
+import type { DailySummary } from '@guga-onduty-w/shared';
 import type { SummaryRepo } from '../types.js';
 import { DrizzleCtx, whereAll, eqIf, num } from './_base.js';
 

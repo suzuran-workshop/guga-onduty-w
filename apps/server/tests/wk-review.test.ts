@@ -155,15 +155,10 @@ describe('#7 settings key 白名单 + 值校验', () => {
     const r = await admin.req('PUT', '/api/v1/settings', { body: { settings: [{ key: 'evil_key', value: '1' }] } });
     expect(r.status).toBe(400);
   });
-  it('admin 写非法 semester_start → 400（该键驱动全校单双周锚点）', async () => {
-    const admin = await h.loginAs('admin');
-    const r = await admin.req('PUT', '/api/v1/settings', { body: { settings: [{ key: 'semester_start', value: 'not-a-date' }] } });
-    expect(r.status).toBe(400);
-  });
-  it('admin 写合法 semester_start → 200', async () => {
+  it('semester_start 已随值班域拆分迁出 → 400（值周域不再管理该键）', async () => {
     const admin = await h.loginAs('admin');
     const r = await admin.req('PUT', '/api/v1/settings', { body: { settings: [{ key: 'semester_start', value: '2026-09-01' }] } });
-    expect(r.status).toBe(200);
+    expect(r.status).toBe(400);
   });
   it('admin 写非法 bool 值 → 400', async () => {
     const admin = await h.loginAs('admin');

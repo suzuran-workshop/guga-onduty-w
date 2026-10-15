@@ -3,7 +3,6 @@
  * 与 pg.migrate.ts 对称：摊平业务表 + auth SDK 5 表的具名导出。
  */
 export * from './sqlite.js';
-export * from './sqlite.duty.js';
 import { sqliteAuthTables } from '@homurajs/auth/tables';
 
 export const users = sqliteAuthTables.users;

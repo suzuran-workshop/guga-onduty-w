@@ -11,7 +11,7 @@
  *  - listByCampus join classes+grades 取 className/gradeName。
  */
 import { eq, and, desc, asc, sql, inArray } from 'drizzle-orm';
-import type { Award } from '@class-duty/shared';
+import type { Award } from '@guga-onduty-w/shared';
 import type { AwardsRepo } from '../types.js';
 import { DrizzleCtx, whereAll, eqIf, num } from './_base.js';
 

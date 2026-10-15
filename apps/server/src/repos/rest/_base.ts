@@ -11,7 +11,7 @@
  * 列名 = camelCase（restSchemaFromPg 从 pg 元数据派生，与 drizzle 侧同名）。
  */
 import type { RestDb, RestTable, RestRow, RestFilters } from '@homurajs/db';
-import type { Pagination } from '@class-duty/shared';
+import type { Pagination } from '@guga-onduty-w/shared';
 
 export interface RestCtx {
   rest: RestDb;

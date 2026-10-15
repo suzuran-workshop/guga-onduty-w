@@ -14,7 +14,7 @@ import type { RouteDeps } from './_deps.js';
 import { getProfile, requireRole, resolveCampusId } from '../middleware/profile.js';
 import { ok, created, ApiError, parsePagination } from '../http/respond.js';
 import { EventBus } from '../utils/event-bus.js';
-import type { RecordStatus } from '@class-duty/shared';
+import type { RecordStatus } from '@guga-onduty-w/shared';
 
 const IMAGE_NS = 'records'; // 命名空间基名；上传拼成 records/<campusId>（REVIEW #5）
 const MAX_IMAGES = 9;

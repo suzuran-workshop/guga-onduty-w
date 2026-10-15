@@ -13,8 +13,8 @@
  *  - businessRoutes 挂在 '/'（createApp 内部），故此处每个模块都带完整 /api/v1/<res> 前缀。
  *
  * 域划分：
- *  - 值周域（细粒度巡查）：records/appeals/awards/statistics/summary/tags/templates/... —— 现有，不动。
- *  - 值班域（粗粒度巡查，融合方案 DUTY-FUSION.md）：/api/v1/duty/* —— 排班/打卡/巡查/调班/矩阵。
+ *  - 值周域（细粒度巡查）：records/appeals/awards/statistics/summary/tags/templates/... —— 本仓库全部
+ *    （原值班域已拆分至 guga-onduty 仓库）。
  */
 import { Hono } from 'hono';
 import type { RouteDeps } from './_deps.js';
@@ -35,7 +35,6 @@ import { createStatisticsRoutes } from './statistics.js';
 import { createAwardRoutes } from './awards.js';
 import { createSettingRoutes } from './settings.js';
 import { createSseRoutes } from './sse.js';
-import { createDutyRoutes } from './duty.js';
 
 /** 组装业务 API 路由（挂到 createApp 的 routes） */
 export function buildApiRoutes(deps: RouteDeps): Hono {
@@ -60,9 +59,6 @@ export function buildApiRoutes(deps: RouteDeps): Hono {
   api.route('/api/v1/awards', createAwardRoutes(deps));
   api.route('/api/v1/settings', createSettingRoutes(deps));
   api.route('/api/v1/sse', createSseRoutes(deps));
-
-  // ── 值班域（粗粒度巡查，融合方案）──
-  api.route('/api/v1/duty', createDutyRoutes(deps));
 
   return api;
 }

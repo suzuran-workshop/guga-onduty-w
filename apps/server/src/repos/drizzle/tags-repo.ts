@@ -8,7 +8,7 @@
  *  - isSystem 存 int 0/1（旧 schema 一致）；create 的 isSystem 布尔入参转 0/1。
  */
 import { asc, desc, eq, inArray } from 'drizzle-orm';
-import type { Tag, TagCategory } from '@class-duty/shared';
+import type { Tag, TagCategory } from '@guga-onduty-w/shared';
 import type { TagsRepo } from '../types.js';
 import { DrizzleCtx, whereAll, eqIf, num } from './_base.js';
 

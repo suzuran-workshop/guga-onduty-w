@@ -4,7 +4,7 @@
  * admin 看全部、非 admin 看自己校区（分支在路由，repo 只提供 listAll/listForCampus）。
  */
 import { asc, eq } from 'drizzle-orm';
-import type { Campus } from '@class-duty/shared';
+import type { Campus } from '@guga-onduty-w/shared';
 import type { CampusesRepo } from '../types.js';
 import { DrizzleCtx, num } from './_base.js';
 

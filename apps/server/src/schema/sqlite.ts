@@ -22,12 +22,6 @@ import {
   RECORD_ACTIONS,
   sqlInList,
 } from './enums.js';
-import {
-  dutyAreas, dutyLocations, dutyTimeSlots, dutySchedules,
-  dutyCheckins, dutyInspections, dutySwaps,
-} from './sqlite.duty.js';
-// 再导出，使 Tables(=typeof sqliteTables) 含值班表，repo 层可经 ctx.tables.dutyXxx 访问
-export { dutyAreas, dutyLocations, dutyTimeSlots, dutySchedules, dutyCheckins, dutyInspections, dutySwaps };
 
 /** 引用列（NOT NULL text，存 uuid）—— 完整性由 repo 层保证 */
 const ref = (name: string) => text(name).notNull();
@@ -99,7 +93,6 @@ export const userProfiles = sqliteTable(
     displayName: sqliteCol.text('displayName').notNull(),
     role: sqliteCol.text('role').notNull(),
     groupId: optRef('groupId'),
-    canInspect: sqliteCol.int('canInspect').notNull().default(0),
   },
   (t) => [
     check('user_profiles_role_check', sql`role IN (${sql.raw(sqlInList(ROLES))})`),
@@ -267,12 +260,4 @@ export const sqliteBusinessSchema = {
   dailySummaries,
   awards,
   settings,
-  // ── 值班域（融合方案，docs/DUTY-FUSION.md §2）──
-  dutyAreas,
-  dutyLocations,
-  dutyTimeSlots,
-  dutySchedules,
-  dutyCheckins,
-  dutyInspections,
-  dutySwaps,
 };

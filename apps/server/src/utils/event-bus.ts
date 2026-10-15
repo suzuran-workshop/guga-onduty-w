@@ -8,7 +8,7 @@
  * 边界（保留现状，非本次范围）：进程内单例，多实例部署需改 Redis Pub/Sub（见 ARCHITECTURE）。
  */
 import { EventEmitter } from 'node:events';
-import type { RecordCreatedEvent } from '@class-duty/shared';
+import type { RecordCreatedEvent } from '@guga-onduty-w/shared';
 
 // 再导出，让消费方（sse.ts）从一处拿全部事件载荷类型
 export type { RecordCreatedEvent };

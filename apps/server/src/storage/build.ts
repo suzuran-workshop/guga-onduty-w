@@ -35,12 +35,12 @@ export function buildStorage(cfg: AppConfig, handle: DbHandle, logger?: { warn: 
  *  - 非 admin 且 key 校区 ≠ 本人校区 → 404（不泄露跨校区文件存在性）。
  *  - 结构不符（遗留/伪造 key）→ 仅 admin 放行，其余 fail-closed 404。
  */
-const FILE_DOMAINS = ['records', 'duty-checkin', 'duty-inspect'];
+const FILE_DOMAINS = ['records'];
 
 export function buildFileRoutes(storage: FileStorage): Hono {
   const app = new Hono();
   app.use('/files/*', async (c, next) => {
-    const profile = c.get('profile') as import('@class-duty/shared').UserProfile | undefined;
+    const profile = c.get('profile') as import('@guga-onduty-w/shared').UserProfile | undefined;
     if (!profile) {
       return c.json({ success: false, error: { code: 'UNAUTHORIZED', message: '未认证' } }, 401);
     }

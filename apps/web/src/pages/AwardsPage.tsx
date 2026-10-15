@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { api } from '@/api/client';
 import { getCurrentWeek, formatTime } from '@/lib/week';
-import type { Award } from '@class-duty/shared';
+import type { Award } from '@guga-onduty-w/shared';
 
 export default function AwardsPage() {
   const { t } = useTranslation();

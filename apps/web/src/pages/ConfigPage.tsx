@@ -28,7 +28,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { api } from '@/api/client';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
-import type { Campus, Grade, Class, UserView } from '@class-duty/shared';
+import type { Campus, Grade, Class, UserView } from '@guga-onduty-w/shared';
 
 type TabKey = 'campuses' | 'grades' | 'classes' | 'users' | 'groups' | 'tags' | 'templates';
 

@@ -10,7 +10,7 @@
  *  - trend 的周次列表由路由算好传入（repo 不碰日期逻辑，便于三轨一致）。
  */
 import { desc, eq, and, sql, gte, lt, inArray } from 'drizzle-orm';
-import type { ClassRanking, TrendPoint, DashboardStats } from '@class-duty/shared';
+import type { ClassRanking, TrendPoint, DashboardStats } from '@guga-onduty-w/shared';
 import type { StatisticsRepo } from '../types.js';
 import { DrizzleCtx, whereAll, num } from './_base.js';
 

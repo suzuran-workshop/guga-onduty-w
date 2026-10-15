@@ -10,7 +10,7 @@
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { User, UserProfile, UserRole } from '@class-duty/shared';
+import type { User, UserProfile, UserRole } from '@guga-onduty-w/shared';
 import { api, authApi, ApiClientError, setUnauthorizedHandler } from '../api/client';
 
 interface MeResponse {

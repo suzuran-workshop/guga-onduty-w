@@ -25,7 +25,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { api } from '@/api/client';
 import { getCurrentWeek, formatTime } from '@/lib/week';
 import { cn } from '@/lib/utils';
-import type { ClassRanking, TrendPoint, RecordWithDetails, Class, Grade } from '@class-duty/shared';
+import type { ClassRanking, TrendPoint, RecordWithDetails, Class, Grade } from '@guga-onduty-w/shared';
 
 function rankBadgeClass(rank: number): string {
   if (rank === 1) return 'bg-yellow-500 text-yellow-950';

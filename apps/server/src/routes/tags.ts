@@ -13,7 +13,7 @@ import type { Context } from 'hono';
 import type { RouteDeps } from './_deps.js';
 import { getProfile, requireRole, resolveCampusId, resolveWriteCampusId } from '../middleware/profile.js';
 import { ok, created, ApiError, isUniqueViolation } from '../http/respond.js';
-import type { Tag } from '@class-duty/shared';
+import type { Tag } from '@guga-onduty-w/shared';
 
 function assertOwnership(c: Context, tag: Tag | null): Tag {
   if (!tag) throw ApiError.notFound('标签不存在');

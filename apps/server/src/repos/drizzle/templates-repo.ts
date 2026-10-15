@@ -9,7 +9,7 @@
  *  - tagIds 是 JSON 列（string[] of tag uuid），drizzle 自动编解码。
  */
 import { eq, and, asc, inArray } from 'drizzle-orm';
-import type { Template, Tag, TagCategory } from '@class-duty/shared';
+import type { Template, Tag, TagCategory } from '@guga-onduty-w/shared';
 import type { TemplatesRepo } from '../types.js';
 import { DrizzleCtx, num } from './_base.js';
 

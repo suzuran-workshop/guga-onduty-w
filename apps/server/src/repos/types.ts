@@ -9,14 +9,13 @@
  *  - 所有 id 为 uuid string。
  *  - campusId 强制隔离：写操作的 campusId 由调用方（路由，取自 profile）传入，repo 不信任请求体。
  *  - 多语句操作用事务（drizzle: db.transaction；rest: 无事务，best-effort + 幂等设计补偿）。
- *  - 返回领域对象（camelCase，见 @class-duty/shared）；JSON 列已反序列化为数组。
+ *  - 返回领域对象（camelCase，见 @guga-onduty-w/shared）；JSON 列已反序列化为数组。
  */
 import type {
   Campus, Grade, Class, DutyGroup, Tag, Template, RecordWithDetails,
   Appeal, AppealWithDetails, DailySummary, Award, UserView, UserProfile, User,
   ClassRanking, TrendPoint, DashboardStats, RecordStatus, UserRole, Pagination,
-} from '@class-duty/shared';
-import type { DutyRepos } from './duty-types.js';
+} from '@guga-onduty-w/shared';
 
 /** 分页结果 */
 export interface Paged<T> {
@@ -69,9 +68,9 @@ export interface UsersRepo {
   /** 建号：auth register（user+password）+ 建 profile，事务/顺序保证 */
   create(input: {
     campusId: string; username: string; password: string;
-    displayName: string; role: UserRole; groupId?: string | null; canInspect?: number;
+    displayName: string; role: UserRole; groupId?: string | null;
   }): Promise<UserView>;
-  update(userId: string, input: { displayName: string; role: UserRole; groupId?: string | null; canInspect?: number }): Promise<UserView | null>;
+  update(userId: string, input: { displayName: string; role: UserRole; groupId?: string | null }): Promise<UserView | null>;
   remove(userId: string): Promise<void>;
   /** /auth/me：身份 + 档案 + 校区名 */
   findMe(userId: string): Promise<{ user: User; profile: UserProfile; campusName: string } | null>;
@@ -116,12 +115,6 @@ export interface RecordsRepo {
   revoke(id: string, operatorId: string, reason: string): Promise<void>;
   /** 导出行（CSV） */
   listForExport(campusId: string, startWeek?: string, endWeek?: string): Promise<RecordWithDetails[]>;
-  /**
-   * 记录人活动（改良 A：到岗率桥接值周履职）——返回 [fromEpoch,toEpoch) 内本校区所有记录的
-   * (recorderId, recordedAt) 精简投影，供 duty service 计算「某值周生某日是否提交过记录」= 到岗。
-   * 只取两列（不拉完整行），校内规模高效。
-   */
-  listRecorderActivity(campusId: string, fromEpoch: number, toEpoch: number): Promise<{ recorderId: string; recordedAt: number }[]>;
 }
 
 // ── 申诉 ────────────────────────────────────────────────────────────
@@ -183,6 +176,4 @@ export interface Repos {
   statistics: StatisticsRepo;
   awards: AwardsRepo;
   settings: SettingsRepo;
-  /** 值班域（融合方案，docs/DUTY-FUSION.md）—— 排班/打卡/巡查/调班 */
-  duty: DutyRepos;
 }

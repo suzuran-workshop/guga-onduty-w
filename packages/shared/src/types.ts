@@ -59,8 +59,6 @@ export interface UserProfile {
   displayName: string;
   role: UserRole;
   groupId: string | null;
-  /** 领导巡查权限（0/1）：teacher 且被授权者可巡查在岗（值班融合，DUTY-FUSION §1） */
-  canInspect: number;
 }
 
 /** 列表页返回的用户视图（身份 + 档案 + 关联名） */
@@ -73,8 +71,6 @@ export interface UserView {
   groupId: string | null;
   groupName: string | null;
   campusName: string;
-  /** 领导巡查权限（0/1） */
-  canInspect: number;
   createdAt: number;
 }
 
@@ -326,7 +322,3 @@ export interface RecordCreatedEvent {
   timestamp: number;
   campusId: string;
 }
-
-// ── 值班域 wire 契约（融合方案 DUTY-FUSION.md）─────────────────────────
-// 单一 import 路径：前端从 '@class-duty/shared' 一并取值周 + 值班类型。
-export * from './duty.js';
