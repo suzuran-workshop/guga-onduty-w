@@ -94,6 +94,20 @@ export function createRecordRoutes(deps: RouteDeps): Hono {
       objectKeys.push(r.objectKey);
     }
 
+    // 分块上传路径：前端先经 /api/v1/files/{init,chunk,complete} 拿到 objectKey，再随记录提交 image_keys。
+    // 记录 POST 请求体因此不含二进制，远小于 qw-pages 网关 ~1MB 入站上限。
+    const preKeys = form.getAll('image_keys').filter((v): v is string => typeof v === 'string' && v.length > 0);
+    if (preKeys.length > 0) {
+      if (objectKeys.length + preKeys.length > MAX_IMAGES) throw ApiError.badRequest(`图片最多 ${MAX_IMAGES} 张`);
+      for (const k of preKeys) {
+        const segs = k.split('/');
+        const wellFormed = segs.length >= 3 && segs[0] === IMAGE_NS && segs[2] === 'files';
+        if (!wellFormed) throw ApiError.badRequest('非法图片 key');
+        if (segs[1] !== ownership.campusId) throw ApiError.forbidden('不能引用他校区图片');
+        objectKeys.push(k);
+      }
+    }
+
     const record = await repos.records.create({
       campusId: ownership.campusId,
       classId,

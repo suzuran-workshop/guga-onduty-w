@@ -5,13 +5,13 @@
  * 本项目在此之上加 repos/profile 中间件所需依赖，统一类型。
  */
 import type { Hono } from 'hono';
-import type { FileStorage } from '@homurajs/storage';
+import type { ChunkedFileStorage } from '@homurajs/storage';
 import type { Repos } from '../repos/types.js';
 import type { AuthBundle } from '../auth/build.js';
 
 export interface RouteDeps {
   repos: Repos;
-  storage: FileStorage;
+  storage: ChunkedFileStorage;
   auth: AuthBundle;
 }
 

@@ -16,8 +16,9 @@ import { buildAuth, type AuthBundle } from './auth/build.js';
 import { createRepos } from './repos/index.js';
 import type { Repos } from './repos/types.js';
 import { buildStorage } from './storage/build.js';
-import type { FileStorage } from '@homurajs/storage';
+import type { ChunkedFileStorage } from '@homurajs/storage';
 import { buildApp } from './app.js';
+import { seedRest } from './db/seed-rest.js';
 
 export interface Bootstrapped {
   cfg: AppConfig;
@@ -25,7 +26,7 @@ export interface Bootstrapped {
   handle: DbHandle;
   auth: AuthBundle;
   repos: Repos;
-  storage: FileStorage;
+  storage: ChunkedFileStorage;
   homura: HomuraApp;
   /** 优雅关闭（关 db 连接） */
   shutdown(): void;
@@ -53,6 +54,12 @@ export async function bootstrap(opts: BootstrapOptions): Promise<Bootstrapped> {
     passwordProvider: auth.passwordProvider,
     userStore: auth.userStore,
   });
+
+  // rest 轨：幂等种子（无迁移，冷启动灌默认校区/班级/管理员/settings）
+  if (handle.kind === 'rest') {
+    await seedRest(handle, { passwordProvider: auth.passwordProvider, userStore: auth.userStore }, logger);
+  }
+
   const storage = buildStorage(cfg, handle, logger);
 
   const homura = buildApp({

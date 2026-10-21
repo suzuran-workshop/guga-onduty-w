@@ -25,7 +25,7 @@ import { pingDb } from './db/client.js';
 import type { AuthBundle } from './auth/build.js';
 import { buildApiRoutes } from './routes/index.js';
 import { buildFileRoutes } from './storage/build.js';
-import type { FileStorage } from '@homurajs/storage';
+import type { ChunkedFileStorage } from '@homurajs/storage';
 import type { Repos } from './repos/types.js';
 import { ApiError, isUniqueViolation } from './http/respond.js';
 
@@ -34,7 +34,7 @@ export interface BuildAppOptions {
   handle: DbHandle;
   auth: AuthBundle;
   repos: Repos;
-  storage: FileStorage;
+  storage: ChunkedFileStorage;
   logger: Logger;
   /** 前端静态资源目录（adapter.assetsDir 算出）；提供则挂 static + SPA fallback */
   staticDir?: string;
@@ -63,7 +63,7 @@ export function buildApp(opts: BuildAppOptions): HomuraApp {
   business.route('/', buildApiRoutes({ repos, storage, auth }));
   // /files/<key> 代理下载（createFileProxyRoutes 内部已注册 /files/:key，故挂根路径 '/'）
   // objectKey 为 uuid 前缀不可猜；<img> 同源自动带 cookie。修复旧代码图片死数据 bug。
-  business.route('/', buildFileRoutes(storage));
+  business.route('/', buildFileRoutes(storage, repos.users));
 
   // app-kit 的 createApp 对**每个**进入 onError 的错误都先 logger.error('unhandled', …) 再委托给
   // 我们的 onError。但本项目大量用 ApiError 表达预期的 4xx（404/403/409），这些不该进 error 级监控

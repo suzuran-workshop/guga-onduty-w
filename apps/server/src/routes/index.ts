@@ -35,13 +35,16 @@ import { createStatisticsRoutes } from './statistics.js';
 import { createAwardRoutes } from './awards.js';
 import { createSettingRoutes } from './settings.js';
 import { createSseRoutes } from './sse.js';
+import { createFileChunkRoutes } from './files.js';
 
 /** 组装业务 API 路由（挂到 createApp 的 routes） */
 export function buildApiRoutes(deps: RouteDeps): Hono {
   const api = new Hono();
 
-  // 统一前置：session claims → 业务档案
-  api.use('*', requireProfile(deps.repos.users));
+  // 统一前置：session claims → 业务档案。
+  // ⚠ 仅守 /api/v1/* —— 不能挂 '*'，否则本 app 以 '/' 挂载时会拦截所有请求（含 SPA 根/深链），
+  //   无会话即 401，使 app-kit 排在其后的 static + SPA fallback 永远不可达（同源生产部署 bug）。
+  api.use('/api/v1/*', requireProfile(deps.repos.users));
 
   // ── 值周域（细粒度巡查）──
   api.route('/api/v1/auth', createAuthRoutes(deps));
@@ -59,6 +62,8 @@ export function buildApiRoutes(deps: RouteDeps): Hono {
   api.route('/api/v1/awards', createAwardRoutes(deps));
   api.route('/api/v1/settings', createSettingRoutes(deps));
   api.route('/api/v1/sse', createSseRoutes(deps));
+  // 分块上传（配合前端 chunk-client，绕开 qw-pages 网关 ~1MB 入站上限）
+  api.route('/api/v1/files', createFileChunkRoutes(deps));
 
   return api;
 }

@@ -72,3 +72,11 @@ export function jsonArr(v: unknown): string[] | null {
 export function uuid(): string {
   return crypto.randomUUID();
 }
+
+/**
+ * 唯一冲突预判错误 —— rest 轨无 DB 级 UNIQUE 冒泡路径（写前先查重再插入），
+ * 抛出与 drizzle 驱动错误 message 可被 isUniqueViolation（routes → 409）识别的同构错误。
+ */
+export function dupError(table: string, cols: string): Error {
+  return new Error(`UNIQUE constraint failed: ${table}.${cols} (rest 轨唯一冲突预判)`);
+}

@@ -1,29 +1,36 @@
 /**
- * 对象存储装配 —— @homurajs/storage local-fs 后端 + /files 代理路由。
+ * 对象存储装配 —— @homurajs/storage DB 分块后端 + /files 代理路由。
  *
  * 迁移要点（docs §2.6）：
- *  - 旧代码 writeFileSync 落盘 + 无读取端点（图片死数据）→ storage.uploadFile + /files/<key> 代理。
+ *  - 旧代码 writeFileSync 落盘 + 无读取端点（图片死数据）→ storage + /files/<key> 代理。
  *  - records.images 存 objectKey（不再存自造相对路径）。
  *
- * 形态边界：
- *  - standalone（sqlite/pg）：local-fs 后端（rootDir 可写）。
- *  - qw-pages：local 后端不可用（应用根只读），正解是 db 后端 —— 但 @homurajs/storage@26.10.15
- *    发布缺失 ./db、./tables 子路径文件（发包 bug，见 MIGRATION §2.6 注），故 rest 轨 storage 待该包修复。
- *    本次 rest 轨 repo 也未实现（P4），storage 在 rest 轨暂不可用，buildStorage 会 warn。
+ * 后端选型（26.10.19 起 ./db 子路径已随包发布，此前 26.10.15 漏发）：
+ *  - rest 轨（qw-pages）：createRestFileStore —— 二进制分块 base64 写入 homura_files / homura_file_chunks
+ *    两张 PostgREST 表 → 持久化，不随冷启动/重发布丢失（local-fs 在只读应用根不可用）。
+ *    表由部署期受控迁移预建（createRestFileStore 无 DDL 权限、不建表）。
+ *  - drizzle 轨（standalone sqlite/pg）：createDrizzleFileStore —— 同一分块模型，运行时 CREATE TABLE
+ *    IF NOT EXISTS 自建，使 dev 与线上共用同一条「分块上传 / 流式下载」代码路径。
+ *  - 强制分块绕开两道平台限制：网关单请求 body ≥1MB→413、PostgREST 单值 ~1MB→500。
+ *    前端配套 @homurajs/storage/chunk-client 逐块 raw PUT，见 routes/files.ts。
  */
-import type { FileStorage } from '@homurajs/storage';
-import { createLocalStorage } from '@homurajs/storage/local';
+import type { ChunkedFileStorage } from '@homurajs/storage';
+import { createRestFileStore, createDrizzleFileStore } from '@homurajs/storage/db';
 import { createFileProxyRoutes } from '@homurajs/storage/proxy';
 import { Hono } from 'hono';
 import type { AppConfig } from '../config.js';
 import type { DbHandle } from '../db/client.js';
+import { requireProfile } from '../middleware/profile.js';
+import type { UsersRepo } from '../repos/types.js';
 
-/** 构造存储后端（当前仅 local-fs；rest 轨待 storage 包修复后接 db 后端） */
-export function buildStorage(cfg: AppConfig, handle: DbHandle, logger?: { warn: (m: string, f?: any) => void }): FileStorage {
+/** 构造 DB 分块存储后端（两轨统一 ChunkedFileStorage）。 */
+export function buildStorage(cfg: AppConfig, handle: DbHandle, logger?: { info: (m: string, f?: any) => void }): ChunkedFileStorage {
   if (handle.kind === 'rest') {
-    logger?.warn('storage: rest 轨（qw-pages）暂用 local 后端兜底，正式需 db 后端（@homurajs/storage 发包缺失 ./db，见 MIGRATION §2.6）');
+    logger?.info('storage: rest 轨使用 DB 分块后端（createRestFileStore，表须受控迁移预建）');
+    return createRestFileStore(handle.rest);
   }
-  return createLocalStorage({ rootDir: cfg.get('storageRoot') });
+  logger?.info('storage: drizzle 轨使用 DB 分块后端（createDrizzleFileStore，运行时自建表）');
+  return createDrizzleFileStore(handle.db as any);
 }
 
 /**
@@ -37,8 +44,10 @@ export function buildStorage(cfg: AppConfig, handle: DbHandle, logger?: { warn: 
  */
 const FILE_DOMAINS = ['records'];
 
-export function buildFileRoutes(storage: FileStorage): Hono {
+export function buildFileRoutes(storage: ChunkedFileStorage, usersRepo: UsersRepo): Hono {
   const app = new Hono();
+  // /files/* 不在 /api/v1/* 下，故本子应用自带 requireProfile 设 c.profile（否则下方鉴权恒 401）。
+  app.use('/files/*', requireProfile(usersRepo));
   app.use('/files/*', async (c, next) => {
     const profile = c.get('profile') as import('@guga-onduty-w/shared').UserProfile | undefined;
     if (!profile) {

@@ -48,17 +48,18 @@ class MemTable implements RestTable<RestRow> {
     const arr = Array.isArray(rows) ? rows : [rows];
     const out: Row[] = [];
     for (const r of arr) {
-      const conflictKey = opts?.upsertOn ?? this.pk;
-      const existing = this.rows.find((x) => x[conflictKey] === (r as any)[conflictKey]);
-      if (existing) {
-        // upsert：合并
-        Object.assign(existing, r);
-        out.push({ ...existing });
-      } else {
-        const row = { ...(r as Row) };
-        this.rows.push(row);
-        out.push({ ...row });
+      // 仅显式 upsertOn 才合并（忠实 PostgREST：无 on_conflict 的 INSERT 是纯插入，不按主键合并）
+      if (opts?.upsertOn) {
+        const existing = this.rows.find((x) => x[opts.upsertOn!] === (r as any)[opts.upsertOn!]);
+        if (existing) {
+          Object.assign(existing, r);
+          out.push({ ...existing });
+          continue;
+        }
       }
+      const row = { ...(r as Row) };
+      this.rows.push(row);
+      out.push({ ...row });
     }
     return out;
   }

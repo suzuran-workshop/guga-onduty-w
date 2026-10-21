@@ -21,6 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { api } from '@/api/client';
+import { uploadChunked } from '@homurajs/storage/chunk-client';
 import { useAuth } from '@/hooks/useAuth';
 import { getCurrentWeek, formatTime } from '@/lib/week';
 import { cn } from '@/lib/utils';
@@ -84,13 +85,28 @@ export default function RecordPage() {
     }
     setSubmitting(true);
     try {
+      // 图片走分块上传（chunk-client → /api/v1/files/{init,chunk,complete}）：
+      // 绕开 qw-pages 网关对单请求体 ~1MB 的入站硬上限（手机大图一次 multipart 必被 413）。
+      // 每张图切成 ≤384KB 的块逐块 PUT，服务端 base64 分块落库（DB 后端，持久）。
+      const credFetch: typeof fetch = (input, init) => fetch(input, { ...init, credentials: 'include' });
+      const objectKeys: string[] = [];
+      for (const img of images) {
+        const r = await uploadChunked(img, {
+          ns: 'records',
+          initUrl: '/api/v1/files/init',
+          chunkUrl: '/api/v1/files/chunk',
+          completeUrl: '/api/v1/files/complete',
+          fetchImpl: credFetch,
+        });
+        objectKeys.push(r.objectKey);
+      }
       const fd = new FormData();
       fd.set('class_id', selClass);
       if (selTag) fd.set('tag_id', selTag);
       fd.set('score', String(score));
       fd.set('week', week);
       if (comment) fd.set('comment', comment);
-      images.forEach((img) => fd.append('images', img));
+      objectKeys.forEach((k) => fd.append('image_keys', k));
       await api.upload('/records', fd);
       toast.success(t('records.created'));
       setShowForm(false);
