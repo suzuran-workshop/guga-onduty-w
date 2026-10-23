@@ -18,7 +18,7 @@
  */
 import { Hono } from 'hono';
 import type { RouteDeps } from './_deps.js';
-import { requireProfile } from '../middleware/profile.js';
+import { requireProfile, requireStudentScope } from '../middleware/profile.js';
 
 import { createAuthRoutes } from './auth.js';
 import { createCampusRoutes } from './campuses.js';
@@ -45,6 +45,10 @@ export function buildApiRoutes(deps: RouteDeps): Hono {
   // ⚠ 仅守 /api/v1/* —— 不能挂 '*'，否则本 app 以 '/' 挂载时会拦截所有请求（含 SPA 根/深链），
   //   无会话即 401，使 app-kit 排在其后的 static + SPA fallback 永远不可达（同源生产部署 bug）。
   api.use('/api/v1/*', requireProfile(deps.repos.users));
+
+  // student 模块闸门（需求 2：学生只能评价）。默认拒绝——未列入白名单的端点一律 403，
+  // 新增端点自动对 student 关闭。必须在 requireProfile 之后（依赖 c.profile.role）。
+  api.use('/api/v1/*', requireStudentScope());
 
   // ── 值周域（细粒度巡查）──
   api.route('/api/v1/auth', createAuthRoutes(deps));

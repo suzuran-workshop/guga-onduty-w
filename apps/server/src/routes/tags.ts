@@ -7,22 +7,12 @@
  *  - PUT 部分更新（repo 已实现：只改传入字段，修复旧代码缺字段静默重置 bug）。
  *  - DELETE 系统标签额外拒绝（isSystem 为真 → 403，复刻旧逻辑）。
  *  - PUT/DELETE 先 findById 校验归属（非 admin 不得跨校区）。
+ *  - 2026-10-23：归属校验收敛到 middleware 的 assertEntityOwnership（消除本文件的局部副本）。
  */
 import { Hono } from 'hono';
-import type { Context } from 'hono';
 import type { RouteDeps } from './_deps.js';
-import { getProfile, requireRole, resolveCampusId, resolveWriteCampusId } from '../middleware/profile.js';
+import { assertEntityOwnership, requireRole, resolveCampusId, resolveWriteCampusId } from '../middleware/profile.js';
 import { ok, created, ApiError, isUniqueViolation } from '../http/respond.js';
-import type { Tag } from '@guga-onduty-w/shared';
-
-function assertOwnership(c: Context, tag: Tag | null): Tag {
-  if (!tag) throw ApiError.notFound('标签不存在');
-  const profile = getProfile(c);
-  if (profile.role !== 'admin' && tag.campusId !== profile.campusId) {
-    throw ApiError.notFound('标签不存在');
-  }
-  return tag;
-}
 
 export function createTagRoutes(deps: RouteDeps): Hono {
   const { repos } = deps;
@@ -70,7 +60,7 @@ export function createTagRoutes(deps: RouteDeps): Hono {
       .json<{ name?: string; score?: number; color?: string; category?: string }>()
       .catch(() => null as any);
     if (!body) throw ApiError.badRequest('请求体非法');
-    assertOwnership(c, await repos.tags.findById(id));
+    assertEntityOwnership(c, await repos.tags.findById(id), '标签');
     const tag = await repos.tags.update(id, {
       name: body.name,
       score: body.score !== undefined ? Number(body.score) : undefined,
@@ -84,7 +74,7 @@ export function createTagRoutes(deps: RouteDeps): Hono {
   // DELETE /:id —— admin 删标签（系统标签拒绝）
   app.delete('/:id', requireRole('admin'), async (c) => {
     const id = c.req.param('id');
-    const tag = assertOwnership(c, await repos.tags.findById(id));
+    const tag = assertEntityOwnership(c, await repos.tags.findById(id), '标签');
     if (tag.isSystem) throw ApiError.forbidden('系统标签不可删除');
     await repos.tags.remove(id);
     return ok(c, { deleted: true });

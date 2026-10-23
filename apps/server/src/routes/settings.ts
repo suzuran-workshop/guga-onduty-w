@@ -3,7 +3,7 @@
  *
  * 迁移要点（对照旧 routes/settings.ts）：
  *  - GET 返回 key-value map（非数组，复刻旧语义）。
- *  - **PUT 收紧为 admin only**（修复旧代码 student 可改系统设置的越权）。
+ *  - **整模块收紧为 admin only**（2026-10-23：原仅 PUT 收紧，GET 敞开使 student 可读系统配置）。
  *  - upsertMany 事务化（repo 已实现，修复旧代码批量循环无事务的部分更新）。
  *  - 读走 resolveCampusId 隔离；写校区走 resolveWriteCampusId（admin 可指定）。
  */
@@ -16,6 +16,9 @@ export function createSettingRoutes(deps: RouteDeps): Hono {
   const { repos } = deps;
   const app = new Hono();
 
+  // 模块级 RBAC：系统设置属管理面，读写一律 admin only（模块内 fail-closed）
+  app.use('*', requireRole('admin'));
+
   // GET / —— 本校区设置 map
   app.get('/', async (c) => {
     const map = await repos.settings.getMap(resolveCampusId(c));
@@ -23,7 +26,7 @@ export function createSettingRoutes(deps: RouteDeps): Hono {
   });
 
   // PUT / —— admin 批量 upsert 设置
-  app.put('/', requireRole('admin'), async (c) => {
+  app.put('/', async (c) => {
     const body = await c.req
       .json<{ campus_id?: string; settings: { key: string; value: string }[] }>()
       .catch(() => null as any);

@@ -62,6 +62,63 @@ export function requireRole(...roles: UserRole[]): MiddlewareHandler {
   };
 }
 
+/**
+ * student 白名单（需求 2：「学生只能评价，除此之外不能使用任何模块」）。
+ *
+ * ⚠ 这是**默认拒绝（fail-closed）**语义：未列入的端点一律 403。这样将来新增端点
+ * 会自动对 student 关闭，而不是像「逐个端点补 requireRole」那样默认敞开、靠人记得收紧。
+ * 各端点自身的 requireRole（如 revoke=admin、appeal=teacher）仍保留作纵深防御。
+ *
+ * 白名单只含「评价」这条业务链的最小集：
+ *  - 自身身份（前端 useAuth 依赖 GET /auth/me，缺它整站无法初始化）
+ *  - 打分所需的只读：标签、班级（含 join 出的 gradeName）、模板（快选）
+ *  - 创建评价 + 查看评价（自己提交过的记录，校区隔离由端点内校验）
+ *  - 图片上传三端点（扣分必拍照，缺它无法提交扣分）
+ *
+ * 明确**不**给 student 的（原全部敞开，其中前四个是越权读）：
+ *  appeals（全校区申诉单含理由与审批意见）、statistics/export（全校区明细 CSV）、
+ *  settings（系统配置）、templates/export（全校区模板导出）；
+ *  以及 statistics/{ranking,trend,dashboard}、awards、summaries、groups、campuses、
+ *  grades、sse、records/:id/logs（含审批意见）。
+ */
+const STUDENT_ALLOWLIST: ReadonlyArray<{ method: string; path: RegExp }> = [
+  { method: 'GET', path: /^\/api\/v1\/auth\/(me|profile)$/ },
+  { method: 'GET', path: /^\/api\/v1\/tags$/ },
+  { method: 'GET', path: /^\/api\/v1\/classes$/ },
+  { method: 'GET', path: /^\/api\/v1\/templates$/ },
+  // ⚠ 负向前瞻排除 export：/templates/export 同样匹配 /templates/[^/]+，
+  //   不排除就等于把全校区模板导出放给 student（原 P1 泄漏点之一）。
+  { method: 'GET', path: /^\/api\/v1\/templates\/(?!export$)[^/]+$/ },
+  { method: 'GET', path: /^\/api\/v1\/records$/ },
+  { method: 'POST', path: /^\/api\/v1\/records$/ },
+  // 仅 GET 单条详情；/records/:id/{revoke,appeal,logs} 是两段深，天然不匹配，
+  // 且各自另有 requireRole（admin/teacher）——双重保障。
+  { method: 'GET', path: /^\/api\/v1\/records\/[^/]+$/ },
+  { method: 'POST', path: /^\/api\/v1\/files\/(init|complete)$/ },
+  { method: 'PUT', path: /^\/api\/v1\/files\/chunk$/ },
+];
+
+/**
+ * student 模块闸门（默认拒绝）。必须在 requireProfile 之后、业务路由之前挂载。
+ * 非 student 角色直接放行（其权限由各端点 requireRole 管控）。
+ */
+export function requireStudentScope(): MiddlewareHandler {
+  return async (c: Context, next: Next) => {
+    const profile = c.get('profile');
+    if (!profile) return c.json(ERR.unauthorized, 401);
+    if (profile.role !== 'student') {
+      await next();
+      return;
+    }
+    const method = c.req.method;
+    // c.req.path 不含 query，故正则无需考虑 ?campus_id= 等参数
+    const pathname = new URL(c.req.url).pathname;
+    const allowed = STUDENT_ALLOWLIST.some((r) => r.method === method && r.path.test(pathname));
+    if (!allowed) return c.json(ERR.forbidden, 403);
+    await next();
+  };
+}
+
 /** 取当前业务档案（requireProfile 已挂载） */
 export function getProfile(c: Context): UserProfile {
   return c.get('profile');

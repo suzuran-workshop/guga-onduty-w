@@ -8,22 +8,12 @@
  *  - 唯一约束冲突（campus+grade+name 重复）转 409。
  *  - 2026-10-23：新增 `teacher_user_id`（班主任权威关联），写入前校验该用户存在、
  *    属本校区且角色为 teacher —— 绑错 userId 会让「只能申诉自己班」误判、钉钉推送静默失败。
+ *  - 2026-10-23：归属校验收敛到 middleware 的 assertEntityOwnership（消除本文件的局部副本）。
  */
 import { Hono } from 'hono';
-import type { Context } from 'hono';
 import type { RouteDeps } from './_deps.js';
-import { getProfile, requireRole, resolveCampusId, resolveWriteCampusId } from '../middleware/profile.js';
+import { assertEntityOwnership, requireRole, resolveCampusId, resolveWriteCampusId } from '../middleware/profile.js';
 import { ok, created, ApiError, isUniqueViolation } from '../http/respond.js';
-
-/** 校验存在 + 校区归属；返回实体便于链式取字段（非本校区返 404，不泄露存在性） */
-function assertOwnership<T extends { campusId: string }>(c: Context, entity: T | null): T {
-  if (!entity) throw ApiError.notFound('班级不存在');
-  const profile = getProfile(c);
-  if (profile.role !== 'admin' && entity.campusId !== profile.campusId) {
-    throw ApiError.notFound('班级不存在');
-  }
-  return entity;
-}
 
 export function createClassRoutes(deps: RouteDeps): Hono {
   const { repos } = deps;
@@ -79,7 +69,7 @@ export function createClassRoutes(deps: RouteDeps): Hono {
     const id = c.req.param('id');
     const body = await c.req.json<{ name: string; class_teacher?: string; teacher_user_id?: string | null }>().catch(() => null as any);
     if (!body?.name) throw ApiError.badRequest('缺少 name');
-    const existing = assertOwnership(c, await repos.classes.findById(id));
+    const existing = assertEntityOwnership(c, await repos.classes.findById(id), '班级');
     await assertTeacherBinding(existing.campusId, body.teacher_user_id);
     const klass = await repos.classes.update(id, {
       name: body.name,
@@ -93,7 +83,7 @@ export function createClassRoutes(deps: RouteDeps): Hono {
   // DELETE /:id —— admin 删班级
   app.delete('/:id', requireRole('admin'), async (c) => {
     const id = c.req.param('id');
-    const klass = assertOwnership(c, await repos.classes.findById(id)); // 校验存在 + 归属
+    const klass = assertEntityOwnership(c, await repos.classes.findById(id), '班级'); // 校验存在 + 归属
     // REVIEW #8：班级下有记录则拒删（防 records 孤儿 → 列表 innerJoin 丢行/统计错算）
     const recs = await repos.records.list({ campusId: klass.campusId, classId: id, page: 1, pageSize: 1 });
     if (recs.pagination.total > 0) throw ApiError.conflict(`该班级下仍有 ${recs.pagination.total} 条值周记录，无法删除`);

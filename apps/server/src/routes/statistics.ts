@@ -12,7 +12,7 @@
  */
 import { Hono } from 'hono';
 import type { RouteDeps } from './_deps.js';
-import { resolveCampusId } from '../middleware/profile.js';
+import { resolveCampusId, requireRole } from '../middleware/profile.js';
 import { ok, ApiError } from '../http/respond.js';
 import { recentWeeks, todayRange, getCurrentWeek } from '../utils/week.js';
 
@@ -26,6 +26,11 @@ function csvField(v: unknown): string {
 export function createStatisticsRoutes(deps: RouteDeps): Hono {
   const { repos } = deps;
   const app = new Hono();
+
+  // 模块级 RBAC（2026-10-23）：统计域属监督面，仅 admin/teacher 可读。
+  // 原先四个端点全无守卫（student 可直接下载全校区明细 CSV）；改为模块级挂载，
+  // 使将来新增的统计端点自动被覆盖（模块内 fail-closed），不依赖人记得逐条加。
+  app.use('*', requireRole('admin', 'teacher'));
 
   // GET /ranking —— 班级排名
   app.get('/ranking', async (c) => {

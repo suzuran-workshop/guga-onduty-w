@@ -10,7 +10,7 @@
  */
 import { Hono } from 'hono';
 import type { RouteDeps } from './_deps.js';
-import { getProfile, resolveCampusId } from '../middleware/profile.js';
+import { getProfile, requireRole, resolveCampusId } from '../middleware/profile.js';
 import { ok, ApiError, parsePagination } from '../http/respond.js';
 
 export function createAppealRoutes(deps: RouteDeps): Hono {
@@ -18,7 +18,11 @@ export function createAppealRoutes(deps: RouteDeps): Hono {
   const app = new Hono();
 
   // GET / —— 申诉列表（分页 + 角色/校区过滤）
-  app.get('/', async (c) => {
+  // 2026-10-23 修 RBAC 不一致：detail 端点显式拒绝 student，而 list 原先无守卫——
+  // teacherId 过滤只在 role==='teacher' 时生效，student → undefined → 可分页读取全校区
+  // 申诉单（含 teacherName/理由/审批意见/关联记录分数）。现与 detail 对齐收紧为 admin/teacher。
+  // （学生闸门 requireStudentScope 已先挡一道，此处是纵深防御 + 消除两处语义分歧。）
+  app.get('/', requireRole('admin', 'teacher'), async (c) => {
     const profile = getProfile(c);
     const { page, pageSize } = parsePagination(c);
 

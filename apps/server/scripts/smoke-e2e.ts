@@ -130,8 +130,11 @@ async function main() {
 
     // ═════ 多校区隔离 ═════
     console.log('\n[多校区隔离]');
+    // 2026-10-23：campuses 属非评价模块 → student 闸门 403（原代码此处只赋值不断言，是死代码）
     const stuCampuses = await req(stuJar, 'GET', '/api/v1/campuses');
-    // student1 属 c1，非 admin 只能看自己校区
+    assert(stuCampuses.status === 403, `student 读校区应 403（闸门），实际 ${stuCampuses.status}`);
+    ok('student GET /campuses → 403（非评价模块，闸门拦截）');
+    // classes 在学生白名单内（打分需选班），student1 属 c1，非 admin 只能看自己校区
     const stuList = await req(stuJar, 'GET', '/api/v1/classes');
     const stuClassIds = stuList.json?.data?.map((x: any) => x.id) ?? [];
     assert(!stuClassIds.includes(clsC2.id), 'student1(c1) 不应看到 c2 的班级');
@@ -148,11 +151,17 @@ async function main() {
 
     // ═════ 记录创建（multipart + storage + SSE）═════
     console.log('\n[记录 + storage + SSE]');
-    // 先订阅 SSE（student1 校区 c1）
+    // 2026-10-23：SSE 属展示面，已对 student 关闭（需求 2「学生只能评价」）→ 改用 admin 订阅，
+    // 贴合真实大屏场景（管理侧订阅、值周生只管打分）。先验证 student 确实被拒。
+    const stuSse = await fetch(`${BASE}/api/v1/sse/records`, { headers: { Cookie: stuJar.header() } });
+    assert(stuSse.status === 403, `student 订阅 SSE 应 403，实际 ${stuSse.status}`);
+    stuSse.body?.cancel().catch(() => {});
+    ok('student 订阅 SSE → 403（展示面不对学生开放）');
+
     const sseEvents: string[] = [];
     const sseAc = new AbortController();
     const ssePromise = (async () => {
-      const res = await fetch(`${BASE}/api/v1/sse/records`, { headers: { Cookie: stuJar.header() }, signal: sseAc.signal });
+      const res = await fetch(`${BASE}/api/v1/sse/records`, { headers: { Cookie: adminJar.header() }, signal: sseAc.signal });
       const reader = res.body!.getReader();
       const dec = new TextDecoder();
       try {

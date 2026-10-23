@@ -166,6 +166,22 @@ describe('值周小组（成员双写事务）', () => {
     expect(stu.groupId).toBeNull(); // 旧成员清空
     expect(tea.groupId).toBe(gid); // 新成员回填
   });
+
+  it('admin 可管理他校区小组（修复原 listByCampus 只看本人校区的缺陷）', async () => {
+    const c = await h.loginAs('admin'); // admin 属 c1
+    // 在 c2 建一个小组
+    const created = await c.req('POST', '/api/v1/groups', {
+      body: { campus_id: seed.c2.id, name: '二校区值周组' },
+    });
+    expect(created.status).toBe(201);
+    const gid = created.json.data.id;
+    // 修复前：PUT/DELETE 用 listByCampus(admin.campusId=c1) 查找 → 找不到 c2 的组 → 404
+    const upd = await c.req('PUT', `/api/v1/groups/${gid}`, { body: { name: '二校区值周组(改)' } });
+    expect(upd.status).toBe(200);
+    expect(upd.json.data.name).toBe('二校区值周组(改)');
+    const del = await c.req('DELETE', `/api/v1/groups/${gid}`);
+    expect(del.status).toBe(200);
+  });
 });
 
 describe('用户管理（auth register + profile）', () => {
