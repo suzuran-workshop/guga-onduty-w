@@ -42,40 +42,47 @@ export function createRecordRoutes(deps: RouteDeps): Hono {
   });
 
   // POST / —— multipart 创建记录（图片 → storage）
+  // 2026-10-23 改造：班级平铺多选（每班级落一条独立记录）+ 标签多选（分数服务端求和，标签分权威）
+  //   + 含任一扣分标签则强制拍照。字段：class_ids[]、tag_ids[]、week、comment?、images[]、image_keys[]。
   app.post('/', async (c) => {
     const profile = getProfile(c);
     const form = await c.req.formData();
-    const classId = String(form.get('class_id') ?? '');
     const week = String(form.get('week') ?? '');
-    if (!classId || !week) throw ApiError.badRequest('缺少 class_id 或 week');
+    const classIds = form.getAll('class_ids').map(String).filter((s) => s.length > 0);
+    const tagIds = Array.from(new Set(form.getAll('tag_ids').map(String).filter((s) => s.length > 0)));
+    if (classIds.length === 0) throw ApiError.badRequest('至少选择一个班级');
+    if (!week) throw ApiError.badRequest('缺少 week');
 
-    // 班级归属：记录 campusId = 班级所在校区（与旧代码一致）；非 admin 不得跨校区打分
-    const ownership = await repos.classes.findOwnership(classId);
-    if (!ownership) throw ApiError.notFound('班级不存在');
-    if (profile.role !== 'admin' && ownership.campusId !== profile.campusId) {
-      throw ApiError.forbidden('不能跨校区记录');
+    // 班级归属：逐个校验存在性 + 校区（非 admin 不得跨校区打分）；一次批量评价须同校区（简化标签校验与存储命名空间）
+    const ownerships = new Map<string, { campusId: string }>();
+    for (const classId of classIds) {
+      const ownership = await repos.classes.findOwnership(classId);
+      if (!ownership) throw ApiError.notFound(`班级不存在：${classId}`);
+      if (profile.role !== 'admin' && ownership.campusId !== profile.campusId) {
+        throw ApiError.forbidden('不能跨校区记录');
+      }
+      ownerships.set(classId, { campusId: ownership.campusId });
     }
+    const campusIds = Array.from(new Set(classIds.map((id) => ownerships.get(id)!.campusId)));
+    if (campusIds.length !== 1) throw ApiError.badRequest('一次评价的班级须属同一校区');
+    const campusId = campusIds[0]!;
 
-    const tagIdRaw = form.get('tag_id');
-    const tagId = tagIdRaw ? String(tagIdRaw) : null;
-    const scoreRaw = form.get('score');
-    // REVIEW #6：score 零校验修复——'abc'→NaN 静默存 null、'1e308'→Infinity 撑爆 SUM、无范围限制。
-    // 值周分值是小整数（标签默认分 ±1~3），限定 ±100 且必须有限数。
-    let score = 0;
-    if (scoreRaw !== null && scoreRaw !== '') {
-      const parsed = Number(scoreRaw);
-      if (!Number.isFinite(parsed)) throw ApiError.badRequest(`分数非法（非有限数）：${scoreRaw}`);
-      if (parsed < -100 || parsed > 100) throw ApiError.badRequest('分数超出范围（应 -100~100）');
-      score = parsed;
-    }
     const commentRaw = form.get('comment');
     const comment = commentRaw ? String(commentRaw) : null;
 
-    // REVIEW #6：tag_id 存在时校验属本校区（防跨校区引用标签）+ score 未显式给时取标签默认分
-    if (tagId) {
-      const tag = await repos.tags.findById(tagId);
-      if (!tag) throw ApiError.badRequest('标签不存在');
-      if (tag.campusId !== ownership.campusId) throw ApiError.forbidden('不能引用他校区标签');
+    // 标签校验：全部存在 + 属本校区（防跨校区引用）。分数由 repo 按 tagIds 求和（标签分权威，不接受前端 score）。
+    // 「含任一扣分标签则必须拍照」——扣分判定：category==='negative' 或 score<0（训练员确认：点了扣分标签即拍照）。
+    let hasDeduction = false;
+    if (tagIds.length > 0) {
+      const foundTags = await repos.tags.findByIds(tagIds);
+      const foundIds = new Set(foundTags.map((t) => t.id));
+      for (const tid of tagIds) {
+        if (!foundIds.has(tid)) throw ApiError.badRequest(`标签不存在：${tid}`);
+      }
+      for (const t of foundTags) {
+        if (t.campusId !== campusId) throw ApiError.forbidden('不能引用他校区标签');
+        if (t.category === 'negative' || t.score < 0) hasDeduction = true;
+      }
     }
 
     // 图片上传 → storage（校验 MIME/大小/数量）
@@ -90,7 +97,7 @@ export function createRecordRoutes(deps: RouteDeps): Hono {
         throw ApiError.badRequest(`图片 ${file.name} 超过 ${MAX_IMAGE_BYTES / 1024 / 1024}MB 上限`);
       }
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const r = await storage.uploadFile(`${IMAGE_NS}/${ownership.campusId}`, file.name || 'image.jpg', bytes, file.type);
+      const r = await storage.uploadFile(`${IMAGE_NS}/${campusId}`, file.name || 'image.jpg', bytes, file.type);
       objectKeys.push(r.objectKey);
     }
 
@@ -103,34 +110,42 @@ export function createRecordRoutes(deps: RouteDeps): Hono {
         const segs = k.split('/');
         const wellFormed = segs.length >= 3 && segs[0] === IMAGE_NS && segs[2] === 'files';
         if (!wellFormed) throw ApiError.badRequest('非法图片 key');
-        if (segs[1] !== ownership.campusId) throw ApiError.forbidden('不能引用他校区图片');
+        if (segs[1] !== campusId) throw ApiError.forbidden('不能引用他校区图片');
         objectKeys.push(k);
       }
     }
 
-    const record = await repos.records.create({
-      campusId: ownership.campusId,
-      classId,
+    // 扣分必拍照：两条上传路径（multipart images + 分块 image_keys）合并后再判，防分块路径绕过
+    if (hasDeduction && objectKeys.length === 0) {
+      throw ApiError.badRequest('选择扣分标签时必须拍照（至少一张图片）');
+    }
+
+    const images = objectKeys.length > 0 ? objectKeys : null;
+    // 每班级落一条独立记录（单事务，全成或全败）；分数由 repo 按 tagIds 求和
+    const createdRecords = await repos.records.createMany({
+      campusId,
+      classIds,
       recorderId: profile.userId,
-      tagId,
-      score,
+      tagIds,
       comment,
-      images: objectKeys.length > 0 ? objectKeys : null,
+      images,
       week,
       recordedAt: Date.now(),
     });
 
-    // SSE 推送（补 emit；旧代码 create 有 emit、revoke 无）
-    EventBus.emit('record_created', {
-      recordId: record.id,
-      className: record.className,
-      tagName: record.tagName,
-      points: record.score ?? 0,
-      timestamp: record.recordedAt,
-      campusId: record.campusId,
-    });
+    // SSE 推送：每条记录一个事件（大屏/看板消费）
+    for (const record of createdRecords) {
+      EventBus.emit('record_created', {
+        recordId: record.id,
+        className: record.className,
+        tagNames: record.tags.map((t) => t.name),
+        points: record.score,
+        timestamp: record.recordedAt,
+        campusId: record.campusId,
+      });
+    }
 
-    return created(c, record);
+    return created(c, createdRecords);
   });
 
   // GET /:id —— 详情（校区隔离：非 admin 只能看本校区）
@@ -142,6 +157,20 @@ export function createRecordRoutes(deps: RouteDeps): Hono {
       throw ApiError.notFound('记录不存在'); // 不泄露跨校区记录的存在性
     }
     return ok(c, record);
+  });
+
+  // GET /:id/logs —— 记录操作日志（创建/撤回/申诉/调分史）。
+  // 2026-10-23：申诉通过改为「调分回 active」后，调分史从 record.status 迁移到了 recordLogs，
+  // 此前 recordLogs 是纯写表（全仓无读取路径）→ 调分不可追溯。故补此端点。
+  // 权限：admin/teacher（含审批意见等监督面信息，不对值周生开放，与 RBAC 收紧方向一致）。
+  app.get('/:id/logs', requireRole('admin', 'teacher'), async (c) => {
+    const campusId = resolveCampusId(c);
+    const record = await repos.records.findByIdWithDetails(c.req.param('id'));
+    if (!record) throw ApiError.notFound('记录不存在');
+    if (record.campusId !== campusId && getProfile(c).role !== 'admin') {
+      throw ApiError.notFound('记录不存在'); // 不泄露跨校区记录的存在性
+    }
+    return ok(c, await repos.records.listLogs(record.id));
   });
 
   // DELETE /:id —— admin 撤回（软删）
@@ -157,7 +186,7 @@ export function createRecordRoutes(deps: RouteDeps): Hono {
     return ok(c, { revoked: true });
   });
 
-  // POST /:id/appeal —— teacher 申诉
+  // POST /:id/appeal —— teacher 申诉（2026-10-23：只能申诉自己班）
   app.post('/:id/appeal', requireRole('teacher'), async (c) => {
     const profile = getProfile(c);
     const body = await c.req.json<{ reason: string }>().catch(() => ({ reason: '' }));
@@ -166,15 +195,45 @@ export function createRecordRoutes(deps: RouteDeps): Hono {
     const record = await repos.records.findByIdWithDetails(recordId);
     if (!record) throw ApiError.notFound('记录不存在');
     if (record.campusId !== profile.campusId) throw ApiError.forbidden('不能跨校区申诉');
+    // 归属校验：班主任只能申诉自己任班主任的班。未绑定 teacherUserId 的班级一律拒绝
+    // （fail-closed：宁可要求管理员先绑定，也不放行任意同校区教师申诉）。
+    const ownership = await repos.classes.findOwnership(record.classId);
+    if (!ownership || ownership.teacherUserId !== profile.userId) {
+      throw ApiError.forbidden('只能对本班记录发起申诉');
+    }
     if (record.status !== 'active') throw ApiError.badRequest('仅 active 记录可申诉');
     await repos.appeals.create({ recordId, teacherId: profile.userId, reason: body.reason, campusId: profile.campusId });
     return created(c, { appealed: true });
   });
 
-  // POST /:id/appeal/approve —— admin 批准
+  // POST /:id/appeal/approve —— admin 批准（2026-10-23：修改而非撤销）
+  // 管理员给出调整后的 tag_ids（省略则保持原标签集），分数由 repo 按标签重算，记录回 active 照常计分。
   app.post('/:id/appeal/approve', requireRole('admin'), async (c) => {
-    const body = await c.req.json<{ review_comment?: string }>().catch(() => ({}) as { review_comment?: string });
-    await repos.appeals.approve(c.req.param('id'), getProfile(c).userId, body.review_comment ?? null);
+    const body = await c.req
+      .json<{ review_comment?: string; tag_ids?: string[] }>()
+      .catch(() => ({}) as { review_comment?: string; tag_ids?: string[] });
+    // 传了 tag_ids 则校验其存在性与校区归属（防跨校区引用/伪造分数）
+    if (body.tag_ids) {
+      if (!Array.isArray(body.tag_ids)) throw ApiError.badRequest('tag_ids 须为数组');
+      const record = await repos.records.findByIdWithDetails(c.req.param('id'));
+      if (!record) throw ApiError.notFound('记录不存在');
+      const tagIds = Array.from(new Set(body.tag_ids.map(String).filter((s) => s.length > 0)));
+      if (tagIds.length > 0) {
+        const foundTags = await repos.tags.findByIds(tagIds);
+        if (foundTags.length !== tagIds.length) throw ApiError.badRequest('存在不存在的标签');
+        for (const t of foundTags) {
+          if (t.campusId !== record.campusId) throw ApiError.forbidden('不能引用他校区标签');
+        }
+      }
+      await repos.appeals.approve(c.req.param('id'), getProfile(c).userId, {
+        reviewComment: body.review_comment ?? null,
+        tagIds,
+      });
+    } else {
+      await repos.appeals.approve(c.req.param('id'), getProfile(c).userId, {
+        reviewComment: body.review_comment ?? null,
+      });
+    }
     return ok(c, { approved: true });
   });
 

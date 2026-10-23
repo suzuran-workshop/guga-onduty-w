@@ -2,8 +2,7 @@
  * statistics repo（drizzle 实现）—— 聚合查询，双方言一致的口径。
  *
  * 迁移要点（对照旧 routes/statistics.ts）：
- *  - 有效计分口径修复为 active+appealing+appeal_approved（旧代码漏 appeal_approved，
- *    申诉通过的记录反而不计分 —— 语义 bug）。
+ *  - 有效计分口径 SCORED_STATUSES（active+appealing，见 schema/enums.ts 单一真源）。
  *  - ranking 的 total/positive/negative/count 用 SUM(CASE WHEN)；orderBy 重复表达式（不用别名）。
  *  - groupBy 补全所有非聚合列（pg 严格）。
  *  - dashboard 用 epoch 区间 [dayStart,dayEnd) 判「今日」（修复旧代码 UTC 日期边界 bug）。
@@ -13,24 +12,25 @@ import { desc, eq, and, sql, gte, lt, inArray } from 'drizzle-orm';
 import type { ClassRanking, TrendPoint, DashboardStats } from '@guga-onduty-w/shared';
 import type { StatisticsRepo } from '../types.js';
 import { DrizzleCtx, whereAll, num } from './_base.js';
+import { SCORED_STATUSES } from '../../schema/enums.js';
 
 /**
- * 有效计分状态口径（单一真源，ranking/trend/dashboard 复用）。
+ * 有效计分状态口径见 schema/enums.ts 的 SCORED_STATUSES（active + appealing）。
  *
- * ⚠ 语义（REVIEW #1 修正，git 考古 ad886f3 确认）：只有 active + appealing 计分。
+ * ⚠ 语义（2026-10-23 申诉改造后）：
+ *  - active：正常记录，计分。
  *  - appealing：申诉中，罚分**暂仍生效**（未裁决前不倒扣）。
- *  - appeal_approved：申诉**成立** → 记录退出计分 → 罚分被撤销。**这个「排除」正是申诉唯一的生效机制**。
  *  - revoked：管理员撤回 → 不计分。
- * 迁移时曾误把 appeal_approved 当 bug「修复」成计分，导致批准申诉后分数照旧、申诉全程无效。已回退。
+ *  - 申诉通过（adjust）后记录回 **active**、分数改为调整后值 → 照常计分。
+ *    （旧 `appeal_approved` 终态「踢出计分=全额撤销」的机制已移除，改为「修改而非撤销」。）
  */
-const SCORED_STATUSES = ['active', 'appealing'];
 
 export function createStatisticsRepo(ctx: DrizzleCtx): StatisticsRepo {
   const { tables: T } = ctx;
   const db = ctx.db as any;
   const { records, classes, grades } = T;
 
-  // 计分条件下的分数表达式（active/appealing 才计入；appeal_approved=申诉成立已撤销、revoked=撤回，均不计）
+  // 计分条件下的分数表达式（active/appealing 才计入；revoked 撤回不计。申诉通过后记录回 active 照常计分）
   const scoredScore = sql<number>`CASE WHEN ${records.status} IN (${sql.raw(SCORED_STATUSES.map((s) => `'${s}'`).join(','))}) THEN ${records.score} ELSE 0 END`;
 
   return {
@@ -98,7 +98,7 @@ export function createStatisticsRepo(ctx: DrizzleCtx): StatisticsRepo {
     },
 
     async dashboard(campusId, dayStart, dayEnd, week): Promise<DashboardStats> {
-      // 今日聚合口径与 ranking 一致：active+appealing 计入（appeal_approved 申诉成立撤销、revoked 撤回，均不计）。
+      // 今日聚合口径与 ranking 一致：active+appealing 计入（revoked 撤回不计；申诉通过后回 active 照常计分）。
       // 与旧代码差异：旧代码今日只数 active，会把「申诉中」的当日记录漏掉；此处纳入 appealing 使口径与排名一致。
       const todayCond = and(
         eq(records.campusId, campusId),

@@ -98,7 +98,7 @@ export default function AppealsPage() {
                 <div className="flex items-center gap-2">
                   <StatusIcon status={a.status} />
                   <span className="font-semibold">
-                    {a.recordInfo?.className} · {a.recordInfo?.tagName || '--'}
+                    {a.recordInfo?.className} · {a.recordInfo?.tags.map((t) => t.name).join('、') || '--'}
                   </span>
                   <Badge variant={STATUS_VARIANT[a.status]}>{t(`appeals.${a.status}`)}</Badge>
                 </div>

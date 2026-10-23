@@ -11,10 +11,15 @@
 
 // ── 枚举（与 server/src/schema/enums.ts 单一真源对齐）──────────────────
 export type UserRole = 'admin' | 'teacher' | 'student';
-export type RecordStatus = 'active' | 'revoked' | 'appealing' | 'appeal_approved';
+/**
+ * 2026-10-23：移除 `appeal_approved`。申诉通过不再是「撤销记录」的终态，而是「管理员调分后记录回
+ * active 照常计分」（需求：修改而非撤销）。调分历史见 recordLogs 的 `adjust` 动作。
+ */
+export type RecordStatus = 'active' | 'revoked' | 'appealing';
 export type AppealStatus = 'pending' | 'approved' | 'rejected';
 export type TagCategory = 'positive' | 'negative' | 'neutral';
-export type RecordAction = 'create' | 'revoke' | 'appeal' | 'appeal_approve' | 'appeal_reject';
+/** 2026-10-23：`appeal_approve` → `adjust`（申诉通过表现为调分，reason 含审批意见） */
+export type RecordAction = 'create' | 'revoke' | 'appeal' | 'adjust' | 'appeal_reject';
 
 // ── 实体 ────────────────────────────────────────────────────────────
 export interface Campus {
@@ -37,7 +42,10 @@ export interface Class {
   gradeId: string;
   campusId: string;
   name: string;
+  /** 班主任展示名（自由文本，仅展示） */
   classTeacher: string | null;
+  /** 班主任 userId（权威关联，2026-10-23 新增：申诉归属校验 + 钉钉推送）；未绑定为 null */
+  teacherUserId: string | null;
   gradeName?: string;
   campusName?: string;
 }
@@ -115,8 +123,10 @@ export interface DutyRecord {
   campusId: string;
   classId: string;
   recorderId: string;
-  tagId: string | null;
-  score: number | null;
+  /** 评价标签 id 数组（2026-10-23 从单值 tagId 改为多值）；可为 null/空（未选标签，0 分） */
+  tagIds: string[] | null;
+  /** 分数 = 所选标签分之和（服务端按 tagIds 求和，标签分为权威，不接受前端传值） */
+  score: number;
   comment: string | null;
   /** 图片 storage objectKey 数组；读取走 /files/<key> 代理 */
   images: string[] | null;
@@ -129,8 +139,8 @@ export interface RecordWithDetails extends DutyRecord {
   className: string;
   gradeName: string;
   recorderName: string;
-  tagName: string | null;
-  tagColor: string | null;
+  /** 所选标签的完整对象（含 name/score/color/category），按 tagIds 顺序；未选为空数组 */
+  tags: Tag[];
 }
 
 export interface Appeal {
@@ -146,13 +156,14 @@ export interface Appeal {
 }
 
 export interface AppealRecordInfo {
-  score: number | null;
+  score: number;
   comment: string | null;
   week: string;
   recordedAt: number;
   recordStatus: RecordStatus;
   className: string;
-  tagName: string | null;
+  /** 关联记录的标签（2026-10-23 多标签：从单值 tagName 改为对象数组） */
+  tags: Tag[];
 }
 
 export interface AppealWithDetails extends Appeal {
@@ -170,6 +181,8 @@ export interface RecordLog {
   operatorId: string;
   reason: string | null;
   createdAt: number;
+  /** 操作人姓名（join userProfiles；用户已删则为「已删除用户」）—— 仅读取日志时填充 */
+  operatorName?: string;
 }
 
 export interface DailySummary {
@@ -280,20 +293,34 @@ export interface UpdateUserRequest {
   groupId?: string | null;
 }
 
+/**
+ * 创建值周记录请求。2026-10-23 变更（需求：班级平铺多选 + 标签多选）：
+ *  - classIds：一次可选多个班级，服务端为**每个班级落一条独立记录**（各自 id/status，可独立申诉/撤回）。
+ *  - tagIds：可多选标签，分数由服务端按标签分求和（标签分权威，**不接受 score 传值**）。
+ *  - 含任一扣分标签（category=negative 或 score<0）时 images 必填（扣分必拍照）。
+ * 注意：实际 HTTP 走 multipart（FormData），字段为 class_ids[]/tag_ids[]/images[]，见 routes/records.ts。
+ */
 export interface CreateRecordRequest {
-  classId: string;
-  tagId?: string | null;
-  score?: number;
+  classIds: string[];
+  tagIds: string[];
   comment?: string | null;
   week: string;
+  images?: string[] | null;
 }
 
 export interface CreateAppealRequest {
   reason: string;
 }
 
+/**
+ * 申诉裁决请求。2026-10-23 变更（需求：申诉通过是「修改而非撤销」）：
+ * approve 时管理员给出调整后的 tagIds（分数随之重算），记录回 active 照常计分；
+ * reject 时记录回 active、分数不变。reviewComment 记入 recordLogs 的 adjust/appeal_reject。
+ */
 export interface AppealReviewRequest {
   reviewComment?: string | null;
+  /** 仅 approve 用：调整后的标签集；服务端按此重算 score。省略则保持原 tagIds */
+  tagIds?: string[];
 }
 
 export interface CreateSummaryRequest {
@@ -303,9 +330,32 @@ export interface CreateSummaryRequest {
   notifiedTeachers?: string[] | null;
 }
 
+/**
+ * 人工颁发流动红旗请求。2026-10-23 变更（需求：仅管理员人工颁发，系统只提供参考）：
+ * 不再由系统自动评选落库，而是管理员从候选中挑选班级后显式颁发。
+ */
 export interface AwardRequest {
   week: string;
-  gradeId?: string | null;
+  /** 要颁发红旗的班级（可多选）；服务端逐个校验归属与唯一约束 */
+  classIds: string[];
+  category?: string;
+  note?: string | null;
+}
+
+/**
+ * 流动红旗候选（系统提供的**参考**，不落库）。
+ * 由 statistics.ranking 按年级取第一名派生——管理员可采纳，也可改选其他班级。
+ */
+export interface AwardCandidate {
+  classId: string;
+  className: string;
+  gradeId: string;
+  gradeName: string;
+  totalScore: number;
+  /** 该年级内排名（候选通常取 rank=1） */
+  rank: number;
+  /** 该周是否已颁发过（避免重复颁旗；对应 UNIQUE(campusId,classId,week)） */
+  alreadyAwarded: boolean;
 }
 
 export interface PaginationParams {
@@ -317,7 +367,8 @@ export interface PaginationParams {
 export interface RecordCreatedEvent {
   recordId: string;
   className: string;
-  tagName: string | null;
+  /** 所选标签名（2026-10-23 多标签：从单值 tagName 改为数组）；未选标签为空数组 */
+  tagNames: string[];
   points: number;
   timestamp: number;
   campusId: string;

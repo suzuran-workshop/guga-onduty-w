@@ -147,7 +147,7 @@ export default function BigScreenPage() {
             <div key={r.id} className="flex items-center justify-between border-b border-white/5 py-2.5">
               <div>
                 <span className="font-medium">{r.gradeName} {r.className}</span>
-                <span className="ml-3 text-xs text-white/50">{r.tagName || '--'}</span>
+                <span className="ml-3 text-xs text-white/50">{r.tags.map((t) => t.name).join('、') || '--'}</span>
               </div>
               <div className="flex items-center gap-4">
                 <span className={cn('text-base font-semibold', (r.score ?? 0) >= 0 ? 'text-green-400' : 'text-red-400')}>

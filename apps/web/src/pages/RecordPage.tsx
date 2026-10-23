@@ -27,11 +27,10 @@ import { getCurrentWeek, formatTime } from '@/lib/week';
 import { cn } from '@/lib/utils';
 import type { Tag, Class, Template, RecordWithDetails, Pagination, RecordStatus } from '@guga-onduty-w/shared';
 
-const STATUS_VARIANT: Record<RecordStatus, 'success' | 'secondary' | 'warning' | 'default'> = {
+const STATUS_VARIANT: Record<RecordStatus, 'success' | 'secondary' | 'warning'> = {
   active: 'success',
   revoked: 'secondary',
   appealing: 'warning',
-  appeal_approved: 'default',
 };
 
 export default function RecordPage() {
@@ -332,10 +331,24 @@ export default function RecordPage() {
                   <TableRow key={r.id}>
                     <TableCell>{r.gradeName} {r.className}</TableCell>
                     <TableCell>
-                      {r.tagName ? <span className="rounded border px-2 py-0.5 text-xs" style={{ color: r.tagColor ?? undefined }}>{r.tagName}</span> : '--'}
+                      {r.tags.length > 0 ? (
+                        <span className="flex flex-wrap gap-1">
+                          {r.tags.map((tg) => (
+                            <span
+                              key={tg.id}
+                              className="rounded border px-2 py-0.5 text-xs"
+                              style={{ color: tg.color ?? undefined }}
+                            >
+                              {tg.name}
+                            </span>
+                          ))}
+                        </span>
+                      ) : (
+                        '--'
+                      )}
                     </TableCell>
-                    <TableCell className={cn('font-semibold', (r.score ?? 0) >= 0 ? 'text-success' : 'text-destructive')}>
-                      {r.score != null ? `${r.score >= 0 ? '+' : ''}${r.score}` : '--'}
+                    <TableCell className={cn('font-semibold', r.score >= 0 ? 'text-success' : 'text-destructive')}>
+                      {`${r.score >= 0 ? '+' : ''}${r.score}`}
                     </TableCell>
                     <TableCell className="max-w-[160px] truncate text-sm">{r.comment || '--'}</TableCell>
                     <TableCell>{r.week}</TableCell>

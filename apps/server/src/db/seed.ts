@@ -49,30 +49,41 @@ export async function seed(): Promise<void> {
     }
   }
 
+  // ── 用户（auth register + profile）──
+  // 2026-10-23：移到班级之前创建，因为班级要绑定班主任（teacherUserId）；
+  // 绑定是「只能申诉自己班」与钉钉扣分推送的数据基础，seed 必须带上才能开箱演示。
+  const admin = await R.users.create({ campusId: c1.id, username: 'admin', password: PW, displayName: '系统管理员', role: 'admin' });
+  const teacher1 = await R.users.create({ campusId: c1.id, username: 'teacher1', password: PW, displayName: '李老师', role: 'teacher' });
+  const teacher2 = await R.users.create({ campusId: c1.id, username: 'teacher2', password: PW, displayName: '王老师', role: 'teacher' });
+  const student1 = await R.users.create({ campusId: c1.id, username: 'student1', password: PW, displayName: '值周生A', role: 'student' });
+  const student2 = await R.users.create({ campusId: c1.id, username: 'student2', password: PW, displayName: '值周生B', role: 'student' });
+  await R.users.create({ campusId: c2.id, username: 'admin2', password: PW, displayName: '二校区管理员', role: 'admin' });
+  const teacher3 = await R.users.create({ campusId: c2.id, username: 'teacher3', password: PW, displayName: '赵老师', role: 'teacher' });
+  const student3 = await R.users.create({ campusId: c2.id, username: 'student3', password: PW, displayName: '值周生C', role: 'student' });
+
   // ── 班级（每校区每年级 3 个）──
+  // 班主任轮转绑定：c1 的班轮流给 teacher1/teacher2，c2 的班给 teacher3。
+  // classTeacher 文本保留作展示名（取所绑教师的 displayName），权威关联是 teacherUserId。
+  const teachersByCampus: Record<string, { id: string; displayName: string }[]> = {
+    [c1.id]: [teacher1, teacher2],
+    [c2.id]: [teacher3],
+  };
   for (const campus of [c1, c2]) {
     const gradeIds = gradesByCampus[campus.id];
+    const pool = teachersByCampus[campus.id];
     for (let gi = 0; gi < gradeIds.length; gi++) {
       for (let c = 1; c <= 3; c++) {
+        const teacher = pool[(gi * 3 + (c - 1)) % pool.length];
         await R.classes.create({
           campusId: campus.id,
           gradeId: gradeIds[gi],
           name: `${c}班`,
-          classTeacher: `张老师${campus.code.slice(-2)}-${gi + 1}-${c}`,
+          classTeacher: teacher.displayName,
+          teacherUserId: teacher.id,
         });
       }
     }
   }
-
-  // ── 用户（auth register + profile）──
-  const admin = await R.users.create({ campusId: c1.id, username: 'admin', password: PW, displayName: '系统管理员', role: 'admin' });
-  const teacher1 = await R.users.create({ campusId: c1.id, username: 'teacher1', password: PW, displayName: '李老师', role: 'teacher' });
-  await R.users.create({ campusId: c1.id, username: 'teacher2', password: PW, displayName: '王老师', role: 'teacher' });
-  const student1 = await R.users.create({ campusId: c1.id, username: 'student1', password: PW, displayName: '值周生A', role: 'student' });
-  const student2 = await R.users.create({ campusId: c1.id, username: 'student2', password: PW, displayName: '值周生B', role: 'student' });
-  await R.users.create({ campusId: c2.id, username: 'admin2', password: PW, displayName: '二校区管理员', role: 'admin' });
-  await R.users.create({ campusId: c2.id, username: 'teacher3', password: PW, displayName: '赵老师', role: 'teacher' });
-  const student3 = await R.users.create({ campusId: c2.id, username: 'student3', password: PW, displayName: '值周生C', role: 'student' });
 
   // ── 值周小组（成员回填 groupId）──
   await R.groups.create({ campusId: c1.id, name: '周一值周组', members: [student1.id, student2.id] });

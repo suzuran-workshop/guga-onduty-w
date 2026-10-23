@@ -70,9 +70,11 @@ async function main() {
   const cls1 = await R.classes.create({ campusId: c1.id, gradeId: g1.id, name: '1班' });
   const clsC2 = await R.classes.create({ campusId: c2.id, gradeId: (await R.grades.create({ campusId: c2.id, name: '1年级', sortOrder: 1 })).id, name: '1班' });
   await R.users.create({ campusId: c1.id, username: 'admin', password: '123456', displayName: '管理员', role: 'admin' });
-  await R.users.create({ campusId: c1.id, username: 'teacher1', password: '123456', displayName: '李老师', role: 'teacher' });
+  const teacher1 = await R.users.create({ campusId: c1.id, username: 'teacher1', password: '123456', displayName: '李老师', role: 'teacher' });
   const student1 = await R.users.create({ campusId: c1.id, username: 'student1', password: '123456', displayName: '值周生A', role: 'student' });
   await R.users.create({ campusId: c2.id, username: 'student2', password: '123456', displayName: '值周生B', role: 'student' });
+  // 绑定 cls1 班主任 = teacher1（申诉「只能申诉自己班」校验需要；见 routes/records.ts）
+  await R.classes.update(cls1.id, { name: '1班', classTeacher: '李老师', teacherUserId: teacher1.id });
   const tagNeg = await R.tags.create({ campusId: c1.id, name: '迟到', score: -1, category: 'negative', isSystem: true });
 
   // 启动监听
@@ -166,21 +168,34 @@ async function main() {
     await new Promise((r) => setTimeout(r, 200)); // 等 SSE 连上
 
     // teacher 登录（打分通常 student/teacher 都可，这里用 student1 自己打分）
+    // 2026-10-23：form 字段 class_ids[]/tag_ids[]（复数），分数服务端求和不传；响应是数组（每班级一条）
     const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='), (c) => c.charCodeAt(0));
     const form = new FormData();
-    form.append('class_id', cls1.id);
-    form.append('tag_id', tagNeg.id);
-    form.append('score', '-1');
+    form.append('class_ids', cls1.id);
+    form.append('tag_ids', tagNeg.id); // 扣分标签（迟到 -1）→ 必须带图
     form.append('week', '2026-W41');
     form.append('comment', '迟到一人');
     form.append('images', new File([png], 'a.png', { type: 'image/png' }));
     const createRec = await req(stuJar, 'POST', '/api/v1/records', form, true);
-    ok('POST /records（multipart + 图片）', { status: createRec.status, id: createRec.json?.data?.id?.slice(0, 8), images: createRec.json?.data?.images });
+    ok('POST /records（multipart + 图片 + 多标签）', { status: createRec.status, n: createRec.json?.data?.length });
     assert(createRec.status === 201, `创建记录应 201，实际 ${createRec.status}`);
-    const recId = createRec.json.data.id;
-    const objectKey = createRec.json.data.images?.[0];
+    assert(Array.isArray(createRec.json.data) && createRec.json.data.length === 1, '响应应为数组（每班级一条）');
+    const rec0 = createRec.json.data[0];
+    const recId = rec0.id;
+    assert(rec0.score === -1, `分数由标签求和（期望 -1，实际 ${rec0.score}）`);
+    assert(Array.isArray(rec0.tags) && rec0.tags.length === 1, 'tags 展开为对象数组');
+    const objectKey = rec0.images?.[0];
     assert(objectKey, '应返回 image objectKey');
-    assert(createRec.json.data.recorderName === '值周生A', 'recorderName join 生效');
+    assert(rec0.recorderName === '值周生A', 'recorderName join 生效');
+
+    // 扣分标签无图 → 400（扣分必拍照）
+    const noPicForm = new FormData();
+    noPicForm.append('class_ids', cls1.id);
+    noPicForm.append('tag_ids', tagNeg.id);
+    noPicForm.append('week', '2026-W41');
+    const noPic = await req(stuJar, 'POST', '/api/v1/records', noPicForm, true);
+    assert(noPic.status === 400, `扣分无图应 400，实际 ${noPic.status}`);
+    ok('扣分标签无图 → 400（扣分必拍照）');
 
     // SSE 收到 record_created
     await Promise.race([ssePromise, new Promise((r) => setTimeout(r, 1000))]);
@@ -197,7 +212,7 @@ async function main() {
 
     // 非图片类型拒绝
     const badForm = new FormData();
-    badForm.append('class_id', cls1.id);
+    badForm.append('class_ids', cls1.id);
     badForm.append('week', '2026-W41');
     badForm.append('images', new File([new Uint8Array([1, 2, 3])], 'x.exe', { type: 'application/octet-stream' }));
     const badUpload = await req(stuJar, 'POST', '/api/v1/records', badForm, true);
@@ -217,8 +232,9 @@ async function main() {
     const approve = await req(adminJar, 'POST', `/api/v1/records/${recId}/appeal/approve`, { review_comment: '属实' });
     assert(approve.status === 200, 'approve 应 200');
     const recApproved = await req(adminJar, 'GET', `/api/v1/records/${recId}`);
-    assert(recApproved.json.data.status === 'appeal_approved', 'approve 后 record→appeal_approved');
-    ok('admin 批准 → record appeal_approved（事务联动）');
+    // 2026-10-23：申诉通过=「修改而非撤销」，记录回 active（分数保持，未传 tag_ids 则不调分）
+    assert(recApproved.json.data.status === 'active', 'approve 后 record→active（修改而非撤销）');
+    ok('admin 批准 → record 回 active（修改而非撤销）');
 
     // ═════ 统计 ═════
     console.log('\n[统计]');

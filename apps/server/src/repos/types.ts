@@ -11,8 +11,8 @@
  *  - 返回领域对象（camelCase，见 @guga-onduty-w/shared）；JSON 列已反序列化为数组。
  */
 import type {
-  Campus, Grade, Class, DutyGroup, Tag, Template, RecordWithDetails,
-  Appeal, AppealWithDetails, DailySummary, Award, UserView, UserProfile, User,
+  Campus, Grade, Class, DutyGroup, Tag, Template, RecordWithDetails, RecordLog,
+  Appeal, AppealWithDetails, DailySummary, Award, AwardCandidate, UserView, UserProfile, User,
   ClassRanking, TrendPoint, DashboardStats, RecordStatus, UserRole, Pagination,
 } from '@guga-onduty-w/shared';
 
@@ -45,10 +45,12 @@ export interface GradesRepo {
 export interface ClassesRepo {
   listByCampus(campusId: string, gradeId?: string): Promise<Class[]>;
   findById(id: string): Promise<Class | null>;
-  /** 记录创建时取校区/年级归属 */
-  findOwnership(id: string): Promise<{ campusId: string; gradeId: string } | null>;
-  create(input: { campusId: string; gradeId: string; name: string; classTeacher?: string | null }): Promise<Class>;
-  update(id: string, input: { name: string; classTeacher?: string | null }): Promise<Class | null>;
+  /** 记录创建时取校区/年级归属 + 班主任（申诉校验「只能申诉自己班」用） */
+  findOwnership(id: string): Promise<{ campusId: string; gradeId: string; teacherUserId: string | null } | null>;
+  /** 反查某教师任班主任的班级（钉钉周报按教师聚合、申诉归属校验用） */
+  listByTeacher(teacherUserId: string): Promise<Class[]>;
+  create(input: { campusId: string; gradeId: string; name: string; classTeacher?: string | null; teacherUserId?: string | null }): Promise<Class>;
+  update(id: string, input: { name: string; classTeacher?: string | null; teacherUserId?: string | null }): Promise<Class | null>;
   remove(id: string): Promise<void>;
 }
 
@@ -104,14 +106,41 @@ export interface RecordsRepo {
     page: number; pageSize: number;
   }): Promise<Paged<RecordWithDetails>>;
   findByIdWithDetails(id: string): Promise<RecordWithDetails | null>;
-  /** 事务：insert record + record_log；images 为 storage objectKey 数组 */
+  /**
+   * 事务：insert record + record_log；images 为 storage objectKey 数组。
+   * **score 由 repo 按 tagIds 求和写入**（标签分权威，不接受 score 传值）——
+   * 从结构上杜绝「评分模块自行修改分数」。tagIds 必须已校验属本校区（路由负责）。
+   */
   create(input: {
-    campusId: string; classId: string; recorderId: string; tagId?: string | null;
-    score?: number | null; comment?: string | null; images?: string[] | null;
+    campusId: string; classId: string; recorderId: string; tagIds: string[];
+    comment?: string | null; images?: string[] | null;
     week: string; recordedAt: number;
   }): Promise<RecordWithDetails>;
+  /**
+   * 多班级批量创建（需求：班级平铺多选，一次给多个班级相同评价）。
+   * **每班级落一条独立记录**（各自 id/status，可独立申诉/撤回）；单事务保证全成或全败。
+   * score 同样由 repo 按 tagIds 求和（各记录分数相同，因标签集相同）。
+   */
+  createMany(input: {
+    campusId: string; classIds: string[]; recorderId: string; tagIds: string[];
+    comment?: string | null; images?: string[] | null;
+    week: string; recordedAt: number;
+  }): Promise<RecordWithDetails[]>;
   /** 软删（revoke）：事务 update status + log */
   revoke(id: string, operatorId: string, reason: string): Promise<void>;
+  /**
+   * 调整记录分数（需求：申诉通过是「修改而非撤销」）。事务：
+   * update record（tagIds→新集、score→按新 tagIds 重算、status→active）+ log 'adjust'。
+   * 记录回 active 后调整后的分数照常计分（SCORED_STATUSES 含 active）。
+   */
+  adjust(id: string, input: { tagIds: string[]; operatorId: string; reason: string }): Promise<RecordWithDetails>;
+  /**
+   * 记录操作日志（含申诉调分史）。2026-10-23 新增读取路径——
+   * 此前 recordLogs 是纯写表（全仓无 select），而「申诉通过=调分回 active」把调分史
+   * 从 record.status 迁移到了日志里，故必须可查，否则调分不可追溯。
+   * 按时间升序（先 create 后 adjust），含操作人姓名。
+   */
+  listLogs(recordId: string): Promise<RecordLog[]>;
   /** 导出行（CSV） */
   listForExport(campusId: string, startWeek?: string, endWeek?: string): Promise<RecordWithDetails[]>;
 }
@@ -124,9 +153,13 @@ export interface AppealsRepo {
   findById(id: string): Promise<AppealWithDetails | null>;
   /** 事务：update record.status→appealing + insert appeal + log（修复现有非原子 bug） */
   create(input: { recordId: string; teacherId: string; reason: string; campusId: string }): Promise<Appeal>;
-  /** 事务：update appeal(approved) + record(appeal_approved) + log */
-  approve(recordId: string, reviewerId: string, reviewComment: string | null): Promise<void>;
-  /** 事务：update appeal(rejected) + record(回滚 active) + log */
+  /**
+   * 事务：update appeal(approved) + **调整 record 分数**（tagIds→新集、score 重算、status→active）+ log 'adjust'。
+   * 需求：申诉通过是「修改而非撤销」——管理员给出调整后的标签集，记录回 active 照常计分。
+   * tagIds 省略则保持原标签集（仅状态从 appealing 回 active）。
+   */
+  approve(recordId: string, reviewerId: string, opts: { reviewComment: string | null; tagIds?: string[] }): Promise<void>;
+  /** 事务：update appeal(rejected) + record(status appealing→active，分数不变) + log */
   reject(recordId: string, reviewerId: string, reviewComment: string | null): Promise<void>;
 }
 
@@ -138,7 +171,7 @@ export interface SummaryRepo {
 
 // ── 统计 ────────────────────────────────────────────────────────────
 export interface StatisticsRepo {
-  /** 班级排名：有效口径 active+appealing（appeal_approved=申诉成立撤销不计分，REVIEW #1） */
+  /** 班级排名：有效口径 SCORED_STATUSES（active+appealing；见 schema/enums.ts） */
   ranking(campusId: string, week?: string, gradeId?: string): Promise<ClassRanking[]>;
   /** 班级趋势：campusId 强制隔离（REVIEW #3，修复跨校区泄漏） */
   trend(campusId: string, classId: string, weeks: string[]): Promise<TrendPoint[]>;
@@ -149,8 +182,18 @@ export interface StatisticsRepo {
 // ── 流动红旗 ────────────────────────────────────────────────────────
 export interface AwardsRepo {
   listByCampus(campusId: string, week?: string): Promise<Award[]>;
-  /** 自动评选：每年级第一名，幂等（UNIQUE 约束 + onConflict 跳过），事务批量 */
-  autoAward(campusId: string, week: string, gradeId?: string | null): Promise<Award[]>;
+  /**
+   * 候选参考（需求：仅管理员人工颁发，系统只提供参考）。**只读，不落库**。
+   * 由 ranking 按年级取第一名派生；alreadyAwarded 标记该周是否已颁（避免重复）。
+   * gradeId 可选（限定某年级），否则全校区各年级第一名。
+   */
+  candidates(campusId: string, week: string, gradeId?: string | null): Promise<AwardCandidate[]>;
+  /**
+   * 人工颁发（需求：管理员从候选挑选后显式颁发）。事务批量 insert；
+   * 幂等靠 UNIQUE(campusId,classId,week) + onConflictDoNothing（重复颁同一班同一周不报错、不重复）。
+   * 返回本次实际新增的奖项。
+   */
+  grant(campusId: string, week: string, classIds: string[], opts?: { category?: string; note?: string | null }): Promise<Award[]>;
   remove(id: string): Promise<void>;
 }
 
