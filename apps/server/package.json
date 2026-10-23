@@ -8,6 +8,7 @@
     "dev:qw": "tsx watch src/qw-pages.ts",
     "build": "tsc",
     "start": "node dist/index.js",
+    "ensure-env": "tsx src/ensure-env.ts",
     "seed": "tsx src/db/seed.ts",
     "db:generate": "drizzle-kit generate --config=drizzle.sqlite.config.ts && drizzle-kit generate --config=drizzle.pg.config.ts",
     "db:generate:sqlite": "drizzle-kit generate --config=drizzle.sqlite.config.ts",

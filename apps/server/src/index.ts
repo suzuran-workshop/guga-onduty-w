@@ -10,6 +10,7 @@
  */
 import { createNodeAdapter } from '@homurajs/app-kit/serve';
 import { bootstrap } from './bootstrap.js';
+import { reportFatal } from './startup-error.js';
 
 async function main() {
   const adapter = createNodeAdapter();
@@ -42,7 +43,4 @@ async function main() {
   process.on('SIGTERM', () => stop('SIGTERM'));
 }
 
-main().catch((err) => {
-  console.error('启动失败:', err);
-  process.exit(1);
-});
+main().catch((err) => reportFatal('启动', err));

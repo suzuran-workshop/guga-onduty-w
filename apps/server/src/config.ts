@@ -4,10 +4,18 @@
  * 修复现有缺陷：JWT_SECRET 硬编码 fallback（生产不设 env 即用公开弱密钥）→
  * SESSION_SECRET 设为 required，缺失即 fail fast（启动期抛错，不带病上线）。
  *
+ * 再修一处：required 的 fail-fast 虽安全，但冷启动体验极差——照 AGENTS.md 指引
+ * `cp .env.example .env` 后仍会失败（模板里 SESSION_SECRET 是 10 字节的 `<redacted>`，
+ * 撞 @homurajs/auth 的 >=32 字节硬约束）。故 loadConfig() 先调 ensureEnv() 自愈：
+ * 真实 env 优先，否则确保 .env 里有随机生成的 >=32 字节密钥（落盘，重启不失效）。
+ * 挂在 loadConfig 而非 package.json 钩子，才能覆盖 `node dist/index.js`、
+ * 直接 `tsx src/index.ts`、测试台架 bootstrap() 等**所有入口**。
+ *
  * 加载顺序（core README 硬约束）：applyEnvFile(process.env) 必须在 load() 之前，
  * 以便 qw-pages 形态从随产物携带的 homura.config.env 注入密钥。
  */
 import { defineConfig, parses, applyEnvFile, createLogger } from '@homurajs/core';
+import { ensureEnv } from './ensure-env.js';
 
 /** 部署期配置文件并入 env（真实 env 优先；qw-pages 密钥随产物携带的唯一入口） */
 applyEnvFile(process.env);
@@ -100,8 +108,9 @@ const config = defineConfig({
 
 export type AppConfig = ReturnType<typeof config.load>;
 
-/** 加载并校验配置（缺 required 项即抛错） */
+/** 加载并校验配置（缺 required 项即抛错）。先自愈 SESSION_SECRET，避免冷启动 fail-fast。 */
 export function loadConfig(): AppConfig {
+  ensureEnv();
   return config.load();
 }
 
