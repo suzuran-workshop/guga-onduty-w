@@ -62,7 +62,7 @@ export function buildApiRoutes(deps: RouteDeps): Hono {
   api.route('/api/v1/awards', createAwardRoutes(deps));
   api.route('/api/v1/settings', createSettingRoutes(deps));
   api.route('/api/v1/sse', createSseRoutes(deps));
-  // 分块上传（配合前端 chunk-client，绕开 qw-pages 网关 ~1MB 入站上限）
+  // 分块上传（配合前端 chunk-client；历史为绕 qw-pages 网关上限，现保留见 routes/files.ts 说明）
   api.route('/api/v1/files', createFileChunkRoutes(deps));
 
   return api;

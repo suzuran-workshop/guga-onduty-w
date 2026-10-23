@@ -1,12 +1,11 @@
 /**
- * P1 地基验收脚本 —— 真实加载三轨 schema 并在 sqlite 上跑通复杂查询。
+ * P1 地基验收脚本 —— 真实加载双方言 schema 并在 sqlite 上跑通复杂查询。
  * 验收点：
  *  1. import schema/index.ts → 触发 assertSchemaParity 门禁（表/列/主键一致）
- *  2. restSchema 从 pg 派生，列名 = camelCase（PostgREST 用）
- *  3. createDb(sqlite) + runMigrations → 真实建 18 张表
- *  4. 复杂 query：join + SUM(CASE WHEN) 聚合 + groupBy + orderBy（复刻 statistics/ranking 口径）
- *  5. 事务：db.transaction() 多语句原子（复刻 records+logs 写入）
- *  6. JSON 列（images/tagIds/members）读写往返一致
+ *  2. createDb(sqlite) + runMigrations → 真实建 18 张表
+ *  3. 复杂 query：join + SUM(CASE WHEN) 聚合 + groupBy + orderBy（复刻 statistics/ranking 口径）
+ *  4. 事务：db.transaction() 多语句原子（复刻 records+logs 写入）
+ *  5. JSON 列（images/tagIds/members）读写往返一致
  * 运行：pnpm tsx scripts/verify-p1.ts
  */
 import { mkdirSync, rmSync } from 'node:fs';
@@ -16,8 +15,6 @@ import { createDb, runMigrations } from '@homurajs/db';
 import { eq, and, sql, desc, inArray } from 'drizzle-orm';
 
 // import 即触发 assertSchemaParity（schema/index.ts 顶层）
-import { restSchema } from '../src/schema/index.js';
-// sqlite 表对象（repo 运行时用方言匹配的表）
 import { sqliteSchema } from '../src/schema/index.js';
 import {
   campuses,
@@ -40,15 +37,11 @@ function ok(label: string, extra?: unknown) {
 async function main() {
   console.log('\n[P1] 地基验收 —— sqlite 轨\n');
 
-  // ── 1. parity 门禁（import schema/index.ts 已通过，这里确认 rest 派生）──
-  console.log('[1] assertSchemaParity + restSchema 派生');
-  const tables = Object.keys(restSchema);
+  // ── 1. parity 门禁（import schema/index.ts 已通过；双方言表集一致）──
+  console.log('[1] assertSchemaParity 门禁');
   ok('parity 门禁通过（import 未抛错）');
-  ok('rest 派生表数', tables.length);
-  ok('records 的 rest 列名', restSchema.records.columns);
-  if (!restSchema.records.columns.includes('campusId')) throw new Error('rest 列名应为 camelCase campusId');
-  if (restSchema.records.primaryKeys.join() !== 'id') throw new Error('records 主键应为 id');
-  ok('records 主键', restSchema.records.primaryKeys);
+  ok('sqlite 表数（业务 + auth）', Object.keys(sqliteSchema).length);
+  if (!('records' in sqliteSchema)) throw new Error('sqliteSchema 应含 records 表');
 
   // ── 2. createDb(sqlite) + runMigrations ──
   console.log('\n[2] createDb(sqlite) + runMigrations');
@@ -115,7 +108,7 @@ async function main() {
   }).run();
   // ⚠ drizzle 坑：select 对象里的 sql 片段不自动生成 AS 别名，故 ORDER BY 不能引用
   //   字段 key（total），必须重复完整表达式。定义为可复用变量，select 与 orderBy 共用。
-  // ⚠ 三轨一致坑：pg 严格要求 groupBy 含所有非聚合 select 列（sqlite 宽松），故补全 name 列。
+  // ⚠ 双方言一致坑：pg 严格要求 groupBy 含所有非聚合 select 列（sqlite 宽松），故补全 name 列。
   const totalExpr = sql<number>`COALESCE(SUM(CASE WHEN ${records.status} IN ('active','appealing','appeal_approved') THEN ${records.score} ELSE 0 END), 0)`;
   const negCountExpr = sql<number>`COALESCE(SUM(CASE WHEN ${records.score} < 0 AND ${records.status} = 'active' THEN 1 ELSE 0 END), 0)`;
   const ranking = await db
@@ -150,7 +143,7 @@ async function main() {
   ok('inArray 过滤 + 分页命中', { count: weekRows.length });
   if (weekRows.length !== 2) throw new Error('应命中 2 条 active 记录');
 
-  console.log('\n✅✅✅ P1 地基全绿：parity + rest派生 + 18表建表 + 事务 + JSON往返 + join聚合 + inArray分页\n');
+  console.log('\n✅✅✅ P1 地基全绿：parity + 18表建表 + 事务 + JSON往返 + join聚合 + inArray分页\n');
 
   // 清理
   try { (db as any).$client.close?.(); } catch {}

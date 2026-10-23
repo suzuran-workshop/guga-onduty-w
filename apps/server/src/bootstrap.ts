@@ -1,12 +1,12 @@
 /**
- * 启动装配 —— 把 config/db/auth/repos/storage/app 串成完整应用（双入口共用）。
+ * 启动装配 —— 把 config/db/auth/repos/storage/app 串成完整应用。
  *
  * 顺序（docs §2.5）：
- *   loadConfig → logger → openDatabase(按方言) → migrate(drizzle 轨建表) →
+ *   loadConfig → logger → openDatabase(按方言) → migrate(建表) →
  *   buildAuth(SessionManager+PasswordProvider+SDK路由) → createRepos(注入 auth 依赖) →
- *   buildStorage(local-fs) → buildApp(app-kit createApp)
+ *   buildStorage(DB 分块后端) → buildApp(app-kit createApp)
  *
- * secure 由 adapter.trustProxy() 接线（qw-pages 恒 true，standalone 由 TRUST_PROXY=1）。
+ * secure 由 adapter.trustProxy() 接线（standalone 由 TRUST_PROXY=1 开启）。
  */
 import type { HomuraApp } from '@homurajs/app-kit';
 import type { Logger } from '@homurajs/core';
@@ -18,7 +18,6 @@ import type { Repos } from './repos/types.js';
 import { buildStorage } from './storage/build.js';
 import type { ChunkedFileStorage } from '@homurajs/storage';
 import { buildApp } from './app.js';
-import { seedRest } from './db/seed-rest.js';
 
 export interface Bootstrapped {
   cfg: AppConfig;
@@ -54,11 +53,6 @@ export async function bootstrap(opts: BootstrapOptions): Promise<Bootstrapped> {
     passwordProvider: auth.passwordProvider,
     userStore: auth.userStore,
   });
-
-  // rest 轨：幂等种子（无迁移，冷启动灌默认校区/班级/管理员/settings）
-  if (handle.kind === 'rest') {
-    await seedRest(handle, { passwordProvider: auth.passwordProvider, userStore: auth.userStore }, logger);
-  }
 
   const storage = buildStorage(cfg, handle, logger);
 

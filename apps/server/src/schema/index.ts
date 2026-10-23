@@ -1,18 +1,20 @@
 /**
- * Schema 三轨装配入口 —— 单一真源。
+ * Schema 双方言装配入口 —— 单一真源。
  *
  *  - `pgSchema`     = pg 业务表 + auth SDK 5 表（pgAuthTables spread）
  *  - `sqliteSchema` = sqlite 业务表 + auth SDK 5 表（sqliteAuthTables spread）
- *  - `restSchema`   = 由 pgSchema 派生（restSchemaFromPg，不手写第三份）
  *
  * 启动期硬门禁 `assertSchemaParity(pgSchema, sqliteSchema)`：表名集合 / 列名集合 / 主键
  * 三者不一致即抛错，防止双方言 schema 漂移（见 @homurajs/db README）。
  *
- * ⚠ storage 的 db 后端表（homura_files / homura_file_chunks）在 @homurajs/storage@26.10.15
- *   发布中缺失（./tables、./db 子路径文件未打进 dist —— 发包 bug）。本次用 local-fs 后端，
- *   不依赖这两张表，故不纳入 schema。若将来切 db 后端（qw-pages），需待该包修复后补入。
+ * 历史：曾有第三轨 `restSchema`（由 pgSchema 经 restSchemaFromPg 派生，供 PostgREST/qw-pages），
+ * 已于 2026-10-23 随 rest 轨移除（ADR-7）。移除后 parity 门禁是 pg/sqlite 双方言列名一致的
+ * **唯一**保障（原 rest 轨靠从 pg 派生天然一致），故其重要性上升，务必保留。
+ *
+ * ⚠ storage 的 db 后端表（homura_files / homura_file_chunks）由 createDrizzleFileStore 运行时
+ *   CREATE TABLE IF NOT EXISTS 自建，不纳入本 schema（见 storage/build.ts）。
  */
-import { assertSchemaParity, restSchemaFromPg } from '@homurajs/db';
+import { assertSchemaParity } from '@homurajs/db';
 import { pgAuthTables } from '@homurajs/auth/tables';
 import { sqliteAuthTables } from '@homurajs/auth/tables';
 
@@ -34,7 +36,4 @@ export const sqliteSchema = {
 // ── 启动期硬门禁：双方言 parity ──────────────────────────────────────
 // 表名/列名/主键任一漂移即抛错（fail fast，不带病上线）。
 assertSchemaParity(pgSchema, sqliteSchema);
-
-/** rest 轨 schema（从 pg 元数据派生；列名 = PG 真实列名 = camelCase 属性名） */
-export const restSchema = restSchemaFromPg(pgSchema);
 

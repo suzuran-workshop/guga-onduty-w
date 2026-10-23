@@ -1,12 +1,12 @@
 /**
- * standalone 入口 —— 独立部署形态（sqlite/pg + local-fs storage）。
+ * standalone 入口 —— 独立部署形态（sqlite/pg + DB 分块 storage）。
  *
  * RuntimeAdapter（createNodeAdapter）收口形态差异：
  *  - start(app, {port})：读 PORT/HOST，@hono/node-server 监听，支持 AbortSignal 优雅关闭。
  *  - trustProxy()：standalone 由 TRUST_PROXY=1 开启 → 接到 auth cookie 的 secure 选项。
  *  - assetsDir(env)：前端静态资源目录（缺省 dist/client）→ 接到 createApp 的 staticDir。
  *
- * 冷启动：pnpm db:seed && pnpm dev（见 AGENTS.md）。
+ * 冷启动：pnpm db:seed && pnpm dev（见 AGENTS.md；SESSION_SECRET 由 ensure-env 自愈，无需手填）。
  */
 import { createNodeAdapter } from '@homurajs/app-kit/serve';
 import { bootstrap } from './bootstrap.js';

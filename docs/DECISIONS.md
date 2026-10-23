@@ -13,7 +13,8 @@
 
 ## ADR-2：前端使用 Fluent UI v9 + 内联样式
 - **日期**：2026-10-07
-- **状态**：已采纳
+- **状态**：**已被取代**（superseded，2026-10-23 标记）—— 前端已迁移到 Vite + React 19 + shadcn/ui (Tailwind CSS)，
+  见 docs/MIGRATION-HOMURA.md。以下保留原决策记录。
 - **背景**：需要现代、洁净的UI框架，支持亮色/暗色主题
 - **考虑过的方案**：@m3e/react、Ant Design、纯手写CSS
 - **决策**：Fluent UI v9 (`@fluentui/react-components`) + `tokens` + 内联样式
@@ -24,13 +25,16 @@
 
 ## ADR-3：图片存储于文件系统而非数据库
 - **日期**：2026-10-07
-- **状态**：已采纳
+- **状态**：**已被取代**（superseded，2026-10-23 标记）—— 提交 `e74c6d9` 已改用 `@homurajs/storage`
+  DB 分块后端（`createDrizzleFileStore`，二进制分块 base64 存 homura_files/homura_file_chunks 表），
+  不再落文件系统。ADR-7 移除 rest 轨时评估过是否退回文件系统，结论是保留 DB 后端（分块逻辑完整、
+  照常工作，退回属独立决策）。以下保留原决策记录。
 - **背景**：值周记录需支持拍照上传作为扣分证据
 - **考虑过的方案**：base64存DB、文件系统+DB路径、对象存储
 - **决策**：文件系统 `server/uploads/YYYY/MM/uuid.ext` + DB存路径
 - **为什么选这个**：避免SQLite膨胀（影响WAL性能）、备份时可选排除图片、原型阶段够用
 - **后果**：跨服务器部署需共享文件系统或独立的对象存储
-- **何时重新审视**：当需要多服务器部署时
+- **何时重新审视**：当需要多服务器部署时（现 DB 后端已天然支持多实例共享，此顾虑部分消解）
 
 ## ADR-4：使用 pnpm workspace monorepo
 - **日期**：2026-10-07
@@ -62,3 +66,42 @@
   - `docs/DUTY-FUSION.md` 移至值班仓库（作为其值班引擎设计文档）。
 - **后果**：两仓库共享同一底座骨架（@homurajs + drizzle + shadcn），代码高度相似但产品边界清晰。
 - **何时重新审视**：若未来需要两产品数据打通（统一大屏汇总两域），可评估跨服务只读 API。
+
+## ADR-7：移除 PostgREST（rest 轨）与 qw-pages 形态，收敛为 sqlite/pg 双方言
+
+- **日期**：2026-10-23
+- **状态**：已采纳
+- **背景**：仓库曾支持三轨数据方言（sqlite / pg / rest），其中 rest 轨（PostgREST）是为
+  qw-pages 托管形态服务的——该平台不提供 PG 凭据、应用根只读，PostgREST 是其唯一可行的数据路径。
+  上一笔提交 `e74c6d9` 刚把 rest 轨 repo（15 文件）与 DB 分块 storage 落地。但值周域确定走
+  **独立部署**（自建 Node 服务 + sqlite/pg），不再需要 qw-pages 托管；rest 轨成为纯维护负担：
+  每个 repo 要写两遍、无事务需靠幂等补偿、无法本地端到端验证（只能靠 mock-rest 内存桩）。
+- **决策**：移除 rest 轨与 qw-pages 入口，`DbHandle` 从 `DrizzleHandle | RestHandle` 收敛为单一
+  `DrizzleHandle`（`handle.kind` 恒为 `'drizzle'`）。
+- **关键处理**：
+  - 删除：`src/repos/rest/`（15 文件）、`src/db/seed-rest.ts`、`src/qw-pages.ts`、
+    `tests/rest-repos.test.ts`、`tests/helpers/mock-rest.ts`。
+  - 分支收敛 9 文件：`db/client.ts`（核心，类型收窄后所有 `handle.rest` 访问编译报错，是天然安全网）、
+    `repos/index.ts`、`auth/build.ts`（三个 `createRest*Store` 三元收敛）、`storage/build.ts`、
+    `bootstrap.ts`、`db/seed.ts`、`app.ts`、`schema/index.ts`（删 `restSchema` 派生）、`scripts/verify-p1.ts`。
+  - 配置清理：`config.ts` 删 `supabaseUrl`/`supabaseAnonKey`/`runtime`（app.ts 改为硬写 `standalone`，
+    不用 `'auto'` 以避免部署机恰好有 `QWENWORK_WRITABLE_DIR`/`SUPABASE_INSTANCE_ID` 时被误判）；
+    `.env.example` 删对应项；`package.json` 删 `dev:qw`，根删 `dev:server:qw`。
+  - **`postgres` 依赖保留**：它服务 **pg 轨**（`db/client.ts` 仅在 `dialect==='pg'` 分支
+    `await import('@homurajs/db/pg')`），rest 轨只用裸 `fetch`（全仓无 supabase client）。
+  - **`assertSchemaParity` 保留且重要性上升**：原 rest 轨靠 `restSchemaFromPg(pgSchema)` 从 pg 派生
+    天然一致；移除后 pg/sqlite 双方言列名一致的唯一保障就是这道启动期门禁。
+- **为什么选这个**：值周域独立部署后 rest 轨零收益、双份维护成本；收敛后每个 repo 只写一遍，
+  事务语义统一，可本地端到端验证。
+- **为什么不选其他**：保留 rest 轨「以防将来上 qw-pages」= 为不确定的未来付确定的双份维护税；
+  且 rest 轨无事务，与值周域「记录+日志原子写入」「申诉状态机事务联动」的强一致需求本就冲突。
+- **后果**：
+  - `pnpm db:generate` 双方言迁移不受影响（`.migrate.ts` 只 `export * from './{sqlite,pg}.js'`，无 rest 触点）。
+  - 测试数 111 − 12（rest-repos）= **99**（+ 本轮 ensure-env 8 = 107）。
+  - **分块上传保留**：其两个前提（qw-pages 网关 ~1MB、PostgREST 单值 ~1MB）在 standalone 下均不成立
+    （`app.ts` bodyLimit 50MB），但 `routes/files.ts` + 前端 chunk-client 在 drizzle 轨照常工作、
+    实现完整，故本轮最小改动保留。是否退回纯 multipart + 恢复 ADR-3「图片存文件系统」一致性
+    （ADR-3 与 e74c6d9 的 DB 分块后端已矛盾），列为**独立后续决策**，不与本次变更混淆。
+- **何时重新审视**：若将来确需 qw-pages 托管形态，应重新评估——但届时 storage 与 repo 需按新平台契约重写，
+  而非恢复本次删除的 rest 轨代码。
+

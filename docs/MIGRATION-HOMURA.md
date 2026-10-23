@@ -1,9 +1,15 @@
 # MIGRATION — 底层替换为 @homurajs/app-kit + 前端 Vite8/React19/shadcn-ui
 
-> 状态：进行中 · 起始快照 `snapshot/pre-homura-baseline`(ad886f3)
+> ⚠️ **时效性声明（2026-10-23）**：本文档是**历史迁移记录**，记载从旧底层替换为 @homurajs 家族
+> 当时的决策与过程，具档案价值，故正文中关于**三轨数据方言（sqlite/pg/rest）、rest 轨（PostgREST）、
+> qw-pages 双形态部署、restSchemaFromPg 派生、local-fs storage** 等叙述**保留原样、不代表当前架构**。
+> rest 轨与 qw-pages 形态**已于 2026-10-23 移除**，收敛为 sqlite/pg 双方言、standalone 单形态
+> （见 `DECISIONS.md` **ADR-7**）。**当前架构以 `ARCHITECTURE.md` 为准。**
+>
+> 状态：已完成 · 起始快照 `snapshot/pre-homura-baseline`(ad886f3)
 > 目标：用 `@homurajs/*` 家族替换应用底层（core/db/auth/storage/app-kit 五模块尽用），
 > 前端 UI/UX 迁移到 Vite 8 + React 19 + shadcn/ui (Tailwind CSS 3)。
-> 数据方言：**三轨全写**（sqlite / pg / rest），保留 standalone 与 qw-pages 双形态部署能力。
+> 数据方言：迁移当时为**三轨全写**（sqlite / pg / rest）；**现收敛为双方言**（sqlite / pg，见 ADR-7）。
 
 ---
 

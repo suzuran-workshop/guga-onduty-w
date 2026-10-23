@@ -12,21 +12,16 @@
  * 直接 `tsx src/index.ts`、测试台架 bootstrap() 等**所有入口**。
  *
  * 加载顺序（core README 硬约束）：applyEnvFile(process.env) 必须在 load() 之前，
- * 以便 qw-pages 形态从随产物携带的 homura.config.env 注入密钥。
+ * 以便从随产物携带的 homura.config.env 注入密钥（部署期投递通道，真实 env 优先）。
  */
 import { defineConfig, parses, applyEnvFile, createLogger } from '@homurajs/core';
 import { ensureEnv } from './ensure-env.js';
 
-/** 部署期配置文件并入 env（真实 env 优先；qw-pages 密钥随产物携带的唯一入口） */
+/** 部署期配置文件（homura.config.env）并入 env（真实 env 优先于文件） */
 applyEnvFile(process.env);
 
 const config = defineConfig({
-  // ── 运行形态与监听 ──
-  runtime: {
-    env: 'HOMURA_RUNTIME',
-    parse: parses.string,
-    description: "运行形态：'standalone' | 'qw-pages'；缺省自动探测",
-  },
+  // ── 监听 ──
   port: { env: 'PORT', default: 3000, parse: parses.int, description: '监听端口' },
   host: { env: 'HOST', parse: parses.string, description: '监听地址（缺省 0.0.0.0）' },
   trustProxy: {
@@ -36,12 +31,12 @@ const config = defineConfig({
     description: '是否在反向代理后（决定 cookie Secure 与 X-Forwarded-* 可信度）',
   },
 
-  // ── 数据方言（三轨）──
+  // ── 数据方言（双方言）──
   dbDialect: {
     env: 'DB_DIALECT',
     default: 'sqlite',
     parse: parses.string,
-    description: "数据方言：'sqlite' | 'pg' | 'rest'（缺省 sqlite）",
+    description: "数据方言：'sqlite' | 'pg'（缺省 sqlite）",
   },
   dbPath: {
     env: 'DB_PATH',
@@ -55,17 +50,6 @@ const config = defineConfig({
     secret: true,
     description: 'PostgreSQL 连接串（dialect=pg 时必填）',
   },
-  supabaseUrl: {
-    env: 'SUPABASE_URL',
-    parse: parses.string,
-    description: 'PostgREST/Supabase URL（dialect=rest 时必填；qw-pages 自动注入）',
-  },
-  supabaseAnonKey: {
-    env: 'SUPABASE_ANON_KEY',
-    parse: parses.string,
-    secret: true,
-    description: 'Supabase anon key（dialect=rest 时必填）',
-  },
 
   // ── 认证（@homurajs/auth SessionManager）──
   sessionSecret: {
@@ -76,12 +60,14 @@ const config = defineConfig({
     description: 'session HS256 签名密钥（>=32 bytes，必填）',
   },
 
-  // ── 对象存储（@homurajs/storage local 后端）──
+  // ── 对象存储 ──
+  // 注：自 e74c6d9 起 storage 用 DB 分块后端（createDrizzleFileStore），不再读本地根目录，
+  // 故此项目前无消费方（保留以兼容既有 .env / 备将来切回 local-fs 后端时用，见 ADR-3/ADR-7）。
   storageRoot: {
     env: 'STORAGE_ROOT',
     default: './data/files',
     parse: parses.string,
-    description: 'local-fs 存储后端根目录',
+    description: 'local-fs 存储后端根目录（当前 DB 后端不读，保留备用）',
   },
 
   // ── 静态资源 / CORS ──

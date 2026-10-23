@@ -3,7 +3,7 @@
  *
  * ⚠ 迁移说明（docs/MIGRATION-HOMURA.md §2.2）：
  *  - 所有实体 id 从 integer 改为 **uuid string**（身份模型统一到 auth SDK 的 uuid 锚点）。
- *  - 字段一律 **camelCase**，与 drizzle schema / PostgREST 列名 / API wire 三者一致，消除映射层。
+ *  - 字段一律 **camelCase**，与 drizzle schema 列名 / API wire 两者一致，消除映射层。
  *  - 用户拆分为 `User`（auth 身份锚点：id/username/nickname/avatarUrl）+
  *    `UserProfile`（业务档案：campusId/role/displayName/groupId）。
  *  - 时间戳统一 epoch 毫秒（number）。

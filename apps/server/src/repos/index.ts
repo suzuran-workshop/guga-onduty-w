@@ -1,10 +1,8 @@
 /**
- * repo 装配入口 —— 按数据形态派发（docs §2.1）。
+ * repo 装配入口 —— drizzle 双方言（sqlite/pg，docs §2.1）。
  *
- *  - drizzle（sqlite/pg）：createDrizzleRepos，注入方言匹配的 tables + authTables。
- *  - rest（qw-pages）：createRestRepos（P4 实现）。
- *
- * 路由层只依赖 Repos 接口（repos/types.ts），不感知形态。
+ * 按方言注入匹配的 tables + authTables；路由层只依赖 Repos 接口（repos/types.ts），不感知方言。
+ * 历史：曾有 rest 轨（PostgREST / qw-pages），已于 2026-10-23 移除（见 DECISIONS.md ADR-7）。
  */
 import { pgAuthTables, sqliteAuthTables } from '@homurajs/auth/tables';
 import * as pgTables from '../schema/pg.js';
@@ -13,7 +11,6 @@ import type { DbHandle, Tables } from '../db/client.js';
 import type { PasswordProvider, UserStore } from '@homurajs/auth';
 import type { Repos } from './types.js';
 import { createDrizzleRepos } from './drizzle/index.js';
-import { createRestRepos } from './rest/index.js';
 
 export interface CreateReposOptions {
   /** users-repo 需要的 auth 依赖（PasswordProvider + UserStore） */
@@ -22,16 +19,7 @@ export interface CreateReposOptions {
 }
 
 export function createRepos(handle: DbHandle, opts: CreateReposOptions): Repos {
-  if (handle.kind === 'rest') {
-    // rest 轨 repo（PostgREST API，无 join/事务，聚合在 JS 侧）
-    return createRestRepos({
-      rest: handle.rest,
-      passwordProvider: opts.passwordProvider,
-      userStore: opts.userStore,
-    });
-  }
-
-  // drizzle 轨：按方言注入表对象（sqlite 用 sqliteTables/sqliteAuthTables，pg 用 pg*）
+  // 按方言注入表对象（sqlite 用 sqliteTables/sqliteAuthTables，pg 用 pg*）
   const tables: Tables =
     handle.dialect === 'pg' ? (pgTables as unknown as Tables) : (sqliteTables as Tables);
   const authTables =

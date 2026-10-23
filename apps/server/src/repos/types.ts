@@ -1,14 +1,13 @@
 /**
  * Repository 契约 —— db 无关的领域接口。
  *
- * 路由层只依赖这些接口，不碰 drizzle/rest/SQL 细节。三轨装配（repos/index.ts）：
- *  - drizzle 实现覆盖 sqlite + pg（表对象按方言注入，同一份源码）
- *  - rest 实现覆盖 qw-pages（PostgREST API）
+ * 路由层只依赖这些接口，不碰 drizzle/SQL 细节。装配（repos/index.ts）：
+ * drizzle 实现覆盖 sqlite + pg（表对象按方言注入，同一份源码对方言无感）。
  *
  * 通用约定：
  *  - 所有 id 为 uuid string。
  *  - campusId 强制隔离：写操作的 campusId 由调用方（路由，取自 profile）传入，repo 不信任请求体。
- *  - 多语句操作用事务（drizzle: db.transaction；rest: 无事务，best-effort + 幂等设计补偿）。
+ *  - 多语句操作用事务（drizzle: db.transaction，sqlite 同步 / pg 异步，统一 await）。
  *  - 返回领域对象（camelCase，见 @guga-onduty-w/shared）；JSON 列已反序列化为数组。
  */
 import type {

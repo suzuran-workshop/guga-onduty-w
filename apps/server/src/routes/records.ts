@@ -95,7 +95,7 @@ export function createRecordRoutes(deps: RouteDeps): Hono {
     }
 
     // 分块上传路径：前端先经 /api/v1/files/{init,chunk,complete} 拿到 objectKey，再随记录提交 image_keys。
-    // 记录 POST 请求体因此不含二进制，远小于 qw-pages 网关 ~1MB 入站上限。
+    // 记录 POST 请求体因此不含二进制（历史为绕 qw-pages 网关上限，现保留见 routes/files.ts 说明）。
     const preKeys = form.getAll('image_keys').filter((v): v is string => typeof v === 'string' && v.length > 0);
     if (preKeys.length > 0) {
       if (objectKeys.length + preKeys.length > MAX_IMAGES) throw ApiError.badRequest(`图片最多 ${MAX_IMAGES} 张`);

@@ -23,11 +23,6 @@ export async function seed(): Promise<void> {
   const handle = await openDatabase(cfg);
   await migrate(handle);
 
-  if (handle.kind === 'rest') {
-    logger.warn('seed: rest 轨（qw-pages）种子待 P4 rest repo 就绪后支持');
-    return;
-  }
-
   const auth = buildAuth(handle, cfg, { secure: false, loginPath: '/login' });
   const R = createRepos(handle, { passwordProvider: auth.passwordProvider, userStore: auth.userStore });
 
