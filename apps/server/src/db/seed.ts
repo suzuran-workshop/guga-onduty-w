@@ -14,6 +14,7 @@ import { loadConfig, createAppLogger } from '../config.js';
 import { openDatabase, migrate, closeDatabase } from './client.js';
 import { buildAuth } from '../auth/build.js';
 import { createRepos } from '../repos/index.js';
+import { reportFatal } from '../startup-error.js';
 import { pathToFileURL } from 'node:url';
 
 export async function seed(): Promise<void> {
@@ -141,8 +142,5 @@ export async function seed(): Promise<void> {
 
 // 直接运行守卫（旧 seed.ts 是 import 即执行，修复为显式；ESM 标准 idiom）
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  seed().catch((e) => {
-    console.error('Seed 失败:', e);
-    process.exit(1);
-  });
+  seed().catch((e) => reportFatal('Seed', e));
 }
