@@ -50,7 +50,7 @@ export async function seed(): Promise<void> {
   }
 
   // ── 用户（auth register + profile）──
-  // 2026-10-23：移到班级之前创建，因为班级要绑定班主任（teacherUserId）；
+  // 2026-10-23：移到班级之前创建，因为班级要绑定班主任（teacherDingtalkId）；
   // 绑定是「只能申诉自己班」与钉钉扣分推送的数据基础，seed 必须带上才能开箱演示。
   const admin = await R.users.create({ campusId: c1.id, username: 'admin', password: PW, displayName: '系统管理员', role: 'admin' });
   const teacher1 = await R.users.create({ campusId: c1.id, username: 'teacher1', password: PW, displayName: '李老师', role: 'teacher' });
@@ -61,9 +61,30 @@ export async function seed(): Promise<void> {
   const teacher3 = await R.users.create({ campusId: c2.id, username: 'teacher3', password: PW, displayName: '赵老师', role: 'teacher' });
   const student3 = await R.users.create({ campusId: c2.id, username: 'student3', password: PW, displayName: '值周生C', role: 'student' });
 
+  // ── 钉钉身份关联（2026-10-23，需求 4）──
+  // classes.teacherDingtalkId 存的是**钉钉 userid**（非系统 users.id），推送与申诉归属都用它。
+  // seed 造合成钉钉 userid（形状照实测真实值：数字串，非 uuid），并：
+  //  1) 写 oauth2_identity_links（模拟教师已用钉钉 OAuth 登录过）→ 系统内申诉可解析身份；
+  //  2) 写 dingtalkContacts（模拟管理员已「引入组织通讯录」，不含家校）→ 班级绑定校验能过。
+  // 真实部署时这三样分别来自：钉钉后台、教师扫码登录、管理员点「引入通讯录」。
+  const dtUserIds: Record<string, string> = {
+    [teacher1.id]: '0252163856461532927016',
+    [teacher2.id]: '172630053126267508',
+    [teacher3.id]: '5314054424-444663015',
+  };
+  const nowSync = Date.now();
+  for (const [userId, dtId] of Object.entries(dtUserIds)) {
+    await auth.linkStore.create({ userId, provider: 'dingtalk', providerSub: dtId });
+  }
+  await R.dingtalkContacts.upsertMany([
+    { userId: dtUserIds[teacher1.id], name: teacher1.displayName, mobile: '13800000001', title: '班主任', deptIds: [1], deptNames: ['一校区'], syncedAt: nowSync },
+    { userId: dtUserIds[teacher2.id], name: teacher2.displayName, mobile: '13800000002', title: '班主任', deptIds: [1], deptNames: ['一校区'], syncedAt: nowSync },
+    { userId: dtUserIds[teacher3.id], name: teacher3.displayName, mobile: '13800000003', title: '班主任', deptIds: [2], deptNames: ['二校区'], syncedAt: nowSync },
+  ]);
+
   // ── 班级（每校区每年级 3 个）──
   // 班主任轮转绑定：c1 的班轮流给 teacher1/teacher2，c2 的班给 teacher3。
-  // classTeacher 文本保留作展示名（取所绑教师的 displayName），权威关联是 teacherUserId。
+  // classTeacher 文本保留作展示名（取所绑教师的 displayName），权威关联是钉钉 userid。
   const teachersByCampus: Record<string, { id: string; displayName: string }[]> = {
     [c1.id]: [teacher1, teacher2],
     [c2.id]: [teacher3],
@@ -79,7 +100,7 @@ export async function seed(): Promise<void> {
           gradeId: gradeIds[gi],
           name: `${c}班`,
           classTeacher: teacher.displayName,
-          teacherUserId: teacher.id,
+          teacherDingtalkId: dtUserIds[teacher.id],
         });
       }
     }

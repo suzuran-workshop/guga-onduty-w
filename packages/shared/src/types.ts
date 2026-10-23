@@ -44,8 +44,12 @@ export interface Class {
   name: string;
   /** 班主任展示名（自由文本，仅展示） */
   classTeacher: string | null;
-  /** 班主任 userId（权威关联，2026-10-23 新增：申诉归属校验 + 钉钉推送）；未绑定为 null */
-  teacherUserId: string | null;
+  /**
+   * 班主任**钉钉 userid**（权威关联，2026-10-23 新增：扣分推送目标 + 申诉归属校验）。
+   * ⚠ 不是本系统 users.id——钉钉 userid 形如 `0252163856461532927016`，非 uuid。
+   * 由管理员从「引入组织通讯录」的联系人中下拉指定；未绑定为 null。
+   */
+  teacherDingtalkId: string | null;
   gradeName?: string;
   campusName?: string;
 }
@@ -372,4 +376,93 @@ export interface RecordCreatedEvent {
   points: number;
   timestamp: number;
   campusId: string;
+}
+
+// ── 钉钉域（2026-10-23，需求 4：教师免登录收推送）─────────────────────
+// 与 server/src/schema/enums.ts 的 NOTIFICATION_KINDS / NOTIFICATION_STATUSES 单一真源对齐
+
+/** 通知种类 */
+export type NotificationKind = 'record_deduction' | 'record_positive' | 'weekly_report';
+
+/**
+ * 通知状态。⚠ `sent` 的判定不能只看 asyncsend_v2 的 errcode:0——那是「已受理」，
+ * 发给不存在的 userid 也返 0；必须查 getsendresult 回执确认已投递才置 sent。
+ */
+export type NotificationStatus = 'pending' | 'sent' | 'failed' | 'skipped';
+
+/** 钉钉通讯录联系人（本地缓存，源自组织通讯录，**不含家校通讯录**） */
+export interface DingtalkContact {
+  /** 钉钉 userid（企业内唯一，非本系统 users.id） */
+  userId: string;
+  unionId: string | null;
+  name: string;
+  mobile: string | null;
+  title: string | null;
+  avatarUrl: string | null;
+  /** 所属部门 id 列表（同一人可属多部门） */
+  deptIds: number[] | null;
+  /** 部门名路径（冗余存储，展示用） */
+  deptNames: string[] | null;
+  syncedAt: number;
+}
+
+/** 通讯录写入入参（同步时用） */
+export interface DingtalkContactInput {
+  userId: string;
+  unionId?: string | null;
+  name: string;
+  mobile?: string | null;
+  title?: string | null;
+  avatarUrl?: string | null;
+  deptIds?: number[] | null;
+  deptNames?: string[] | null;
+  syncedAt: number;
+}
+
+/** 通讯录同步结果（管理员在设置里触发「引入整个组织通讯录」） */
+export interface ContactsSyncResult {
+  /** 本次写入/更新的联系人数 */
+  synced: number;
+  /** 拉到的部门数 */
+  depts: number;
+  /** 个别部门拉取失败（尽力而为，不中断整体） */
+  truncated: boolean;
+  errors: Array<{ deptId: number; message: string }>;
+  /** 家校通讯录（本系统**不引入**；此处仅回报探测结果供管理员知情） */
+  family: { included: false; reason: string };
+  syncedAt: number;
+}
+
+/** 通知日志领域对象 */
+export interface NotificationLog {
+  id: string;
+  campusId: string;
+  /** 收件人本系统 users.id（可空：通讯录里的人可能还没有系统账号） */
+  recipientUserId: string | null;
+  /** 收件人钉钉 userid（推送实际目标） */
+  recipientPlatformId: string;
+  kind: NotificationKind;
+  status: NotificationStatus;
+  recordId: string | null;
+  week: string | null;
+  title: string | null;
+  /** 幂等键（仅周报填写） */
+  dedupeKey: string | null;
+  /** 钉钉 asyncsend_v2 的 task_id */
+  providerTaskId: string | null;
+  error: string | null;
+  createdAt: number;
+  sentAt: number | null;
+}
+
+/** 通知入库入参 */
+export interface NotificationLogInput {
+  campusId: string;
+  recipientUserId?: string | null;
+  recipientPlatformId: string;
+  kind: NotificationKind;
+  recordId?: string | null;
+  week?: string | null;
+  title?: string | null;
+  dedupeKey?: string | null;
 }

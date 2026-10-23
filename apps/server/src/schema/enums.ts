@@ -34,6 +34,24 @@ export const RECORD_ACTIONS = ['create', 'revoke', 'appeal', 'adjust', 'appeal_r
  */
 export const SCORED_STATUSES = ['active', 'appealing'] as const;
 
+/**
+ * 通知种类（2026-10-23 新增，需求 4：教师免登录收钉钉推送）。
+ *  - `record_deduction`：扣分即时推送（附申诉链接）
+ *  - `record_positive`：加分即时推送（不带申诉链接，仅告知）
+ *  - `weekly_report`：每周得分扣分总计
+ */
+export const NOTIFICATION_KINDS = ['record_deduction', 'record_positive', 'weekly_report'] as const;
+
+/**
+ * 通知状态（2026-10-23 新增）。
+ *  - `pending`：已入库待发送（凭证缺失或异步队列中）
+ *  - `sent`：钉钉受理且回执确认已投递（read 或 unread）
+ *  - `failed`：钉钉返回错误，或回执显示 invalid/failed（⚠ asyncsend_v2 的 errcode:0
+ *    只代表「已受理」，发给不存在的 userid 也返 0，必须查 getsendresult 才能判失败）
+ *  - `skipped`：主动跳过（如班级未绑定班主任、该周周报已发过）
+ */
+export const NOTIFICATION_STATUSES = ['pending', 'sent', 'failed', 'skipped'] as const;
+
 /** 枚举值 → SQL IN 列表字面量（`'a', 'b'`）。值为本地常量，无注入面。 */
 export function sqlInList(values: readonly string[]): string {
   return values.map((v) => `'${v}'`).join(', ');

@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@guga-onduty-w/shared": "workspace:*",
+    "@homurajs/3p": "link:../../../homura/packages/3p",
     "@homurajs/app-kit": "26.10.19",
     "@homurajs/auth": "26.10.19",
     "@homurajs/core": "26.10.19",

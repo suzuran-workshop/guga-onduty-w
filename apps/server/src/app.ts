@@ -28,6 +28,8 @@ import { buildFileRoutes } from './storage/build.js';
 import type { ChunkedFileStorage } from '@homurajs/storage';
 import type { Repos } from './repos/types.js';
 import { ApiError, isUniqueViolation } from './http/respond.js';
+import type { PlatformBundle } from './platform/build.js';
+import type { NotifyService } from './services/notify.js';
 
 export interface BuildAppOptions {
   cfg: AppConfig;
@@ -35,6 +37,8 @@ export interface BuildAppOptions {
   auth: AuthBundle;
   repos: Repos;
   storage: ChunkedFileStorage;
+  platform: PlatformBundle;
+  notify: NotifyService;
   logger: Logger;
   /** 前端静态资源目录（adapter.assetsDir 算出）；提供则挂 static + SPA fallback */
   staticDir?: string;
@@ -43,7 +47,7 @@ export interface BuildAppOptions {
 }
 
 export function buildApp(opts: BuildAppOptions): HomuraApp {
-  const { cfg, handle, auth, repos, storage, logger, staticDir, secure } = opts;
+  const { cfg, handle, auth, repos, storage, platform, notify, logger, staticDir, secure } = opts;
 
   const corsOrigins = cfg.get('corsOrigins').split(',').map((s) => s.trim()).filter(Boolean);
 
@@ -60,7 +64,7 @@ export function buildApp(opts: BuildAppOptions): HomuraApp {
       { status: 413 },
     ),
   }));
-  business.route('/', buildApiRoutes({ repos, storage, auth }));
+  business.route('/', buildApiRoutes({ repos, storage, auth, platform, notify }));
   // /files/<key> 代理下载（createFileProxyRoutes 内部已注册 /files/:key，故挂根路径 '/'）
   // objectKey 为 uuid 前缀不可猜；<img> 同源自动带 cookie。修复旧代码图片死数据 bug。
   business.route('/', buildFileRoutes(storage, repos.users));

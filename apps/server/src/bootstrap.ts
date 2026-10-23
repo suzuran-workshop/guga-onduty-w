@@ -18,6 +18,8 @@ import type { Repos } from './repos/types.js';
 import { buildStorage } from './storage/build.js';
 import type { ChunkedFileStorage } from '@homurajs/storage';
 import { buildApp } from './app.js';
+import { buildPlatform, type PlatformBundle } from './platform/build.js';
+import { createNotifyService, type NotifyService } from './services/notify.js';
 
 export interface Bootstrapped {
   cfg: AppConfig;
@@ -26,8 +28,12 @@ export interface Bootstrapped {
   auth: AuthBundle;
   repos: Repos;
   storage: ChunkedFileStorage;
+  /** 钉钉平台（凭证未配则 platform=null，推送降级为 pending） */
+  platform: PlatformBundle;
+  /** 通知服务（推送/周报/补发） */
+  notify: NotifyService;
   homura: HomuraApp;
-  /** 优雅关闭（关 db 连接） */
+  /** 优雅关闭（停定时器 + 退订事件 + 关 db 连接） */
   shutdown(): void;
 }
 
@@ -56,12 +62,21 @@ export async function bootstrap(opts: BootstrapOptions): Promise<Bootstrapped> {
 
   const storage = buildStorage(cfg, handle, logger);
 
+  // 钉钉平台（凭证未配 → platform=null，通知服务据此降级为 pending，不阻塞启动）
+  const platform = buildPlatform(cfg, logger);
+  const notify = createNotifyService({ cfg, repos, platform, logger });
+  // 订阅 EventBus（记录创建 → 推送）+ 启动周报定时器；两者的清理函数在 shutdown 里调用
+  const unsubscribe = notify.subscribe();
+  const stopScheduler = notify.startScheduler();
+
   const homura = buildApp({
     cfg,
     handle,
     auth,
     repos,
     storage,
+    platform,
+    notify,
     logger,
     staticDir: opts.staticDir,
     secure: opts.secure,
@@ -74,7 +89,13 @@ export async function bootstrap(opts: BootstrapOptions): Promise<Bootstrapped> {
     auth,
     repos,
     storage,
+    platform,
+    notify,
     homura,
-    shutdown: () => closeDatabase(handle),
+    shutdown: () => {
+      unsubscribe();
+      stopScheduler();
+      closeDatabase(handle);
+    },
   };
 }

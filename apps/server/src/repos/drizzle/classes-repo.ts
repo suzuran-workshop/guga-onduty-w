@@ -3,8 +3,8 @@
  * 迁移要点（对照旧 routes/classes.ts）：
  *  - id 为 uuid；listByCampus join grades(gradeName) + campuses(campusName)，可选 gradeId 过滤，
  *    orderBy grades.sortOrder 再 classes.name。
- *  - findOwnership 取 {campusId, gradeId, teacherUserId}：记录创建时确定校区归属 +
- *    申诉时校验「只能申诉自己班」（teacherUserId 对比 profile.userId）。
+ *  - findOwnership 取 {campusId, gradeId, teacherDingtalkId}：记录创建时确定校区归属 +
+ *    申诉时校验「只能申诉自己班」（teacherDingtalkId 对比 profile.userId）。
  *  - listByTeacher：反查某教师任班主任的班级（钉钉周报按教师聚合用）。
  */
 import { asc, eq } from 'drizzle-orm';
@@ -19,7 +19,7 @@ function toClass(r: any): Class {
     campusId: r.campusId,
     name: r.name,
     classTeacher: r.classTeacher ?? null,
-    teacherUserId: r.teacherUserId ?? null,
+    teacherDingtalkId: r.teacherDingtalkId ?? null,
     ...(r.gradeName !== undefined ? { gradeName: r.gradeName } : {}),
     ...(r.campusName !== undefined ? { campusName: r.campusName } : {}),
   };
@@ -35,7 +35,7 @@ export function createClassesRepo(ctx: DrizzleCtx): ClassesRepo {
     campusId: classes.campusId,
     name: classes.name,
     classTeacher: classes.classTeacher,
-    teacherUserId: classes.teacherUserId,
+    teacherDingtalkId: classes.teacherDingtalkId,
     gradeName: grades.name,
     campusName: campuses.name,
   };
@@ -61,20 +61,20 @@ export function createClassesRepo(ctx: DrizzleCtx): ClassesRepo {
       return rows[0] ? toClass(rows[0]) : null;
     },
 
-    async findOwnership(id): Promise<{ campusId: string; gradeId: string; teacherUserId: string | null } | null> {
+    async findOwnership(id): Promise<{ campusId: string; gradeId: string; teacherDingtalkId: string | null } | null> {
       const rows = await db
-        .select({ campusId: classes.campusId, gradeId: classes.gradeId, teacherUserId: classes.teacherUserId })
+        .select({ campusId: classes.campusId, gradeId: classes.gradeId, teacherDingtalkId: classes.teacherDingtalkId })
         .from(classes)
         .where(eq(classes.id, id))
         .limit(1);
       return rows[0]
-        ? { campusId: rows[0].campusId, gradeId: rows[0].gradeId, teacherUserId: rows[0].teacherUserId ?? null }
+        ? { campusId: rows[0].campusId, gradeId: rows[0].gradeId, teacherDingtalkId: rows[0].teacherDingtalkId ?? null }
         : null;
     },
 
-    async listByTeacher(teacherUserId): Promise<Class[]> {
+    async listByTeacher(teacherDingtalkId): Promise<Class[]> {
       const rows = await joined()
-        .where(eq(classes.teacherUserId, teacherUserId))
+        .where(eq(classes.teacherDingtalkId, teacherDingtalkId))
         .orderBy(asc(grades.sortOrder), asc(classes.name));
       return rows.map(toClass);
     },
@@ -87,7 +87,7 @@ export function createClassesRepo(ctx: DrizzleCtx): ClassesRepo {
         campusId: input.campusId,
         name: input.name,
         classTeacher: input.classTeacher ?? null,
-        teacherUserId: input.teacherUserId ?? null,
+        teacherDingtalkId: input.teacherDingtalkId ?? null,
       }).run();
       const found = await this.findById(id);
       if (!found) throw new Error('班级创建后回查失败');
@@ -98,7 +98,7 @@ export function createClassesRepo(ctx: DrizzleCtx): ClassesRepo {
       await db.update(classes).set({
         name: input.name,
         classTeacher: input.classTeacher ?? null,
-        teacherUserId: input.teacherUserId ?? null,
+        teacherDingtalkId: input.teacherDingtalkId ?? null,
       }).where(eq(classes.id, id)).run();
       return this.findById(id);
     },

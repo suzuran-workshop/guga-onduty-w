@@ -19,7 +19,9 @@ import {
   createDrizzleSessionStore,
   createDrizzleUserStore,
   createDrizzlePasswordStore,
+  createDrizzleOAuth2LinkStore,
   type UserStore,
+  type OAuth2LinkStore,
 } from '@homurajs/auth';
 import { createAuthRoutes, sessionMiddleware } from '@homurajs/auth/hono';
 
@@ -34,6 +36,15 @@ export interface AuthBundle {
   /** 业务建号用（admin 创建用户）：register 建 user+password，profile 另建 */
   passwordProvider: PasswordProvider;
   userStore: UserStore;
+  /**
+   * OAuth2 身份关联存储（oauth2_identity_links 表）。
+   * 用途：把「当前登录教师」解析成钉钉 userid（findByUserId → providerSub），
+   * 以校验其是否为某班班主任（classes.teacherDingtalkId 存的是钉钉 userid）。
+   * ⚠ providerSub 是否等于钉钉企业 userid 取决于 oauth2-dingtalk 服务端的 mapUser，
+   * 尚未实测确认（该 IdP 仓库不在本机）；故申诉校验对解析失败一律 fail-closed，
+   * 并引导教师使用钉钉推送里的免登录令牌链接（不依赖此解析）。
+   */
+  linkStore: OAuth2LinkStore;
 }
 
 export interface BuildAuthOptions {
@@ -50,6 +61,8 @@ export function buildAuth(handle: DbHandle, cfg: AppConfig, opts: BuildAuthOptio
   const sessionStore = createDrizzleSessionStore(handle.db as never);
   const userStore = createDrizzleUserStore(handle.db as never);
   const passwordStore = createDrizzlePasswordStore(handle.db as never);
+  // oauth2_identity_links 表已在首个迁移中建好（双方言），故 store 可直接装配
+  const linkStore = createDrizzleOAuth2LinkStore(handle.db as never);
 
   const sessions = new SessionManager({ secret }, sessionStore);
   const passwordProvider = new PasswordProvider({ userStore, passwordStore });
@@ -63,5 +76,5 @@ export function buildAuth(handle: DbHandle, cfg: AppConfig, opts: BuildAuthOptio
     secure: opts.secure,
   });
 
-  return { sessions, sessionMiddleware: mw, authRoutes, passwordProvider, userStore };
+  return { sessions, sessionMiddleware: mw, authRoutes, passwordProvider, userStore, linkStore };
 }

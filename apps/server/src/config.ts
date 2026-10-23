@@ -83,6 +83,74 @@ const config = defineConfig({
     description: 'CORS 允许的来源（逗号分隔）；修复现有硬编码 localhost 缺陷',
   },
 
+  // ── 钉钉集成（需求 4：教师免登录收推送）──────────────────────────
+  // 全部可选：**缺省不启用**，此时推送落库标记 pending + 打日志，凭证到位后可补发，
+  // 不阻塞记录创建主链路（降级优先于「配了才能用」）。
+  appBaseUrl: {
+    env: 'APP_BASE_URL',
+    parse: parses.string,
+    description: '应用对外基址（拼钉钉消息里的申诉链接用，须公网可达）；未配则不推送申诉链接',
+  },
+  dingtalkAppKey: {
+    env: 'DINGTALK_APP_KEY',
+    parse: parses.string,
+    description: '钉钉企业应用 AppKey（配置即启用推送能力）',
+  },
+  dingtalkAppSecret: {
+    env: 'DINGTALK_APP_SECRET',
+    parse: parses.string,
+    secret: true,
+    description: '钉钉企业应用 AppSecret',
+  },
+  dingtalkAgentId: {
+    env: 'DINGTALK_AGENT_ID',
+    parse: parses.string,
+    description: '钉钉工作通知 agentId（asyncsend_v2 必需；无法从 AppKey 反推，需后台查看或调 listMicroApps）',
+  },
+  oauthDingtalkOrgId: {
+    env: 'OAUTH_DINGTALK_ORG_ID',
+    parse: parses.string,
+    description: 'oauth2-dingtalk 组织标识（配置即启用钉钉扫码登录，教师免账密）',
+  },
+  oauthDingtalkBaseUrl: {
+    env: 'OAUTH_DINGTALK_BASE_URL',
+    parse: parses.string,
+    description: 'oauth2-dingtalk 部署地址（缺省线上 dingtalk.auth.xrl.im）',
+  },
+  oauthRedirectUri: {
+    env: 'OAUTH_REDIRECT_URI',
+    parse: parses.string,
+    description: 'OAuth2 回调地址（本地开发须写 :5173 走 Vite proxy，否则 cookie 落错域）',
+  },
+
+  // ── 周报定时器（需求 4：每周得分扣分总计）────────────────────────
+  weeklyReportDay: {
+    env: 'WEEKLY_REPORT_DAY',
+    default: 5,
+    parse: parses.int,
+    description: '周报推送的星期几（0=周日…5=周五，缺省周五）',
+  },
+  weeklyReportHour: {
+    env: 'WEEKLY_REPORT_HOUR',
+    default: 17,
+    parse: parses.int,
+    description: '周报推送的小时（0-23，缺省 17 点）',
+  },
+  weeklyReportEnabled: {
+    env: 'WEEKLY_REPORT_ENABLED',
+    default: true,
+    parse: parses.boolean,
+    description: '是否启用进程内周报定时器（多实例部署应关掉，避免重复推送；靠管理员补发）',
+  },
+
+  // ── 申诉令牌 ──────────────────────────────────────────────────────
+  appealTokenTtlHours: {
+    env: 'APPEAL_TOKEN_TTL_HOURS',
+    default: 72,
+    parse: parses.int,
+    description: '免登录申诉链接有效期（小时，缺省 72）；一次性消费，用后失效',
+  },
+
   // ── 日志 ──
   logLevel: {
     env: 'LOG_LEVEL',

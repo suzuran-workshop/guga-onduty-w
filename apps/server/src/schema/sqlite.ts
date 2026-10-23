@@ -20,6 +20,8 @@ import {
   APPEAL_STATUSES,
   TAG_CATEGORIES,
   RECORD_ACTIONS,
+  NOTIFICATION_KINDS,
+  NOTIFICATION_STATUSES,
   sqlInList,
 } from './enums.js';
 
@@ -63,19 +65,27 @@ export const classes = sqliteTable(
     gradeId: ref('gradeId'),
     campusId: ref('campusId'),
     name: sqliteCol.text('name').notNull(),
-    /** 班主任展示名（自由文本，仅展示）。权威关联用 teacherUserId */
+    /** 班主任展示名（自由文本，仅展示）。权威关联用 teacherDingtalkId */
     classTeacher: sqliteCol.text('classTeacher'),
     /**
-     * 班主任 userId（→ auth users.id / userProfiles.userId）。2026-10-23 新增（需求：
-     * 班主任只能申诉自己班 + 钉钉扣分推送给班主任）。classTeacher 文本无法可靠关联用户
-     * （无唯一约束、可重名、可空），故新增此权威列；文本列保留作展示名。
+     * 班主任的**钉钉 userid**（2026-10-23 需求 4）。
+     *
+     * 为什么是钉钉 userid 而非本系统 users.id：班级↔教师关系的权威取自通讯录/家校，
+     * 管理员从「引入组织通讯录」的联系人里下拉选人；而推送 asyncsend_v2 要的正是钉钉 userid，
+     * 故直接存它——推送链路零转换，且教师**从未登录过系统也能收到扣分推送**。
+     *
+     * ⚠ sqlite 侧本就是 text；pg 侧同为 text（钉钉 userid 非 uuid，用 uuid 列会被 pg 拒绝）。
+     *
+     * 代价（已与产品确认接受）：申诉权限校验需把「当前登录教师」解析成钉钉 userid
+     * （经 oauth2_identity_links），故账密登录的教师无法在系统内申诉——但扣分推送里的
+     * 免登录令牌链接（appealTokens，绑定 teacherDingtalkId）不依赖登录，教师一般走钉钉 OAuth。
      */
-    teacherUserId: optRef('teacherUserId'),
+    teacherDingtalkId: sqliteCol.text('teacherDingtalkId'),
   },
   (t) => [
     uniqueIndex('classes_campus_grade_name_uidx').on(t.campusId, t.gradeId, t.name),
     index('classes_campus_idx').on(t.campusId),
-    index('classes_teacher_idx').on(t.teacherUserId),
+    index('classes_teacher_idx').on(t.teacherDingtalkId),
   ],
 );
 
@@ -268,6 +278,98 @@ export const settings = sqliteTable(
   ],
 );
 
+// ── 钉钉通讯录缓存（2026-10-23，需求 4）─────────────────────────────
+// 管理员在设置里「引入整个组织通讯录」（**不含家校通讯录**）后落本地：
+// 钉钉无「按姓名查 userid」API，推送与班主任下拉选人都必须依赖这份本地索引。
+// 每次同步按 userid upsert（钉钉侧离职/改名后以最新为准）。
+export const dingtalkContacts = sqliteTable(
+  'dingtalkContacts',
+  {
+    userId: text('userId').primaryKey(), // 钉钉 userid（企业内唯一，非本系统 users.id）
+    unionId: sqliteCol.text('unionId'),
+    name: sqliteCol.text('name').notNull(),
+    mobile: sqliteCol.text('mobile'),
+    title: sqliteCol.text('title'),
+    avatarUrl: sqliteCol.text('avatarUrl'),
+    /** 所属部门 id 列表（同一人可属多部门，实测最多 4 个） */
+    deptIds: sqliteJson<number[]>('deptIds'),
+    /** 部门名路径（冗余存储，避免每次展示都重建部门树） */
+    deptNames: sqliteJson<string[]>('deptNames'),
+    syncedAt: sqliteCol.epochMs('syncedAt').notNull(),
+  },
+  (t) => [index('dingtalk_contacts_name_idx').on(t.name)],
+);
+
+// ── 通知日志（2026-10-23，需求 4）───────────────────────────────────
+// 推送的异步队列 + 幂等 + 审计。缺它则：凭证未配时无法落库补发、失败无法重试、
+// 周报无法防重复推送（「管理员可补发」要求幂等）。
+export const notificationLogs = sqliteTable(
+  'notificationLogs',
+  {
+    id: sqliteCol.id(),
+    campusId: ref('campusId'),
+    /** 收件人：本系统 users.id（可空——通讯录里的人可能还没有系统账号） */
+    recipientUserId: optRef('recipientUserId'),
+    /** 收件人钉钉 userid（推送实际目标） */
+    recipientPlatformId: sqliteCol.text('recipientPlatformId').notNull(),
+    kind: sqliteCol.text('kind').notNull(),
+    status: sqliteCol.text('status').notNull().default('pending'),
+    /** 关联记录（扣分推送用；周报为 null） */
+    recordId: optRef('recordId'),
+    /** 关联周次（周报聚合用；扣分推送也带记录所属周，便于按周查询） */
+    week: sqliteCol.text('week'),
+    /** 消息摘要（便于管理员在后台看到推了什么，不存敏感全文） */
+    title: sqliteCol.text('title'),
+    /**
+     * 幂等键（仅周报填写，形如 `weekly:<campusId>:<platformId>:<week>`）。
+     * ⚠ 不能用 (campusId,recipientPlatformId,week,kind) 组合唯一索引去重——
+     * record_deduction 也带 week，同一教师一周内第二次扣分推送会撞约束。
+     * 故用独立可空列 + 唯一索引：其余类型为 NULL，sqlite/pg 下 NULL 互不冲突。
+     */
+    dedupeKey: sqliteCol.text('dedupeKey'),
+    /** 钉钉 asyncsend_v2 返回的 task_id（查回执用） */
+    providerTaskId: sqliteCol.text('providerTaskId'),
+    /** 失败原因（钉钉 errmsg 或回执里的 invalid/failed 归类） */
+    error: sqliteCol.text('error'),
+    createdAt: sqliteCol.createdAt('createdAt'),
+    sentAt: sqliteCol.epochMs('sentAt'),
+  },
+  (t) => [
+    check('notification_logs_kind_check', sql`kind IN (${sql.raw(sqlInList(NOTIFICATION_KINDS))})`),
+    check('notification_logs_status_check', sql`status IN (${sql.raw(sqlInList(NOTIFICATION_STATUSES))})`),
+    uniqueIndex('notification_logs_dedupe_uidx').on(t.dedupeKey),
+    index('notification_logs_campus_idx').on(t.campusId),
+    index('notification_logs_status_idx').on(t.status),
+    index('notification_logs_record_idx').on(t.recordId),
+  ],
+);
+
+// ── 申诉令牌（2026-10-23，需求 4）───────────────────────────────────
+// 教师免登录申诉：钉钉推送里的链接带 token，点开即申诉表单（不进系统、不用账密）。
+// 签名 token 而非 URL 明文参数——绑定 recordId + 教师身份 + 过期 + 一次性，
+// 转发链接也无法冒用（已消费或过期即失效）。
+export const appealTokens = sqliteTable(
+  'appealTokens',
+  {
+    /** 令牌哈希（SHA-256 hex），不存明文——泄漏数据库也无法直接构造可用链接 */
+    tokenHash: text('tokenHash').primaryKey(),
+    recordId: ref('recordId'),
+    /**
+     * 令牌归属教师的**钉钉 userid**（非本系统 users.id）；提交时与班级 teacherDingtalkId 校验一致，
+     * 防他人代填。教师可能根本没有系统账号（免登录申诉正是为此），故用 text 存钉钉 userid。
+     */
+    teacherDingtalkId: sqliteCol.text('teacherDingtalkId').notNull(),
+    expiresAt: sqliteCol.epochMs('expiresAt').notNull(),
+    /** 一次性消费标记 */
+    consumedAt: sqliteCol.epochMs('consumedAt'),
+    createdAt: sqliteCol.createdAt('createdAt'),
+  },
+  (t) => [
+    index('appeal_tokens_record_idx').on(t.recordId),
+    index('appeal_tokens_expires_idx').on(t.expiresAt),
+  ],
+);
+
 /** sqlite 业务表集合（auth 表在 ./index.ts spread 合并） */
 export const sqliteBusinessSchema = {
   campuses,
@@ -283,4 +385,7 @@ export const sqliteBusinessSchema = {
   dailySummaries,
   awards,
   settings,
+  dingtalkContacts,
+  notificationLogs,
+  appealTokens,
 };

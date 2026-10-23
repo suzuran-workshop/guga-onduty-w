@@ -51,45 +51,43 @@ describe('年级/班级 CRUD', () => {
   });
 });
 
-describe('班级班主任绑定（teacher_user_id，2026-10-23 新增）', () => {
-  it('绑定本校区教师 → 201，GET 回读 teacherUserId', async () => {
+describe('班级班主任绑定（teacher_dingtalk_id，2026-10-23 新增）', () => {
+  // 绑定模型（与产品确认）：classes.teacherDingtalkId 存**钉钉 userid**（非系统 users.id）。
+  // 校验只要求该 userid 在「已引入的组织通讯录」中——通讯录是组织级、无校区维度，且按定义
+  // 「引入的人都是教师」，故不再校验系统 role==teacher，也无法/不应按校区拦绑定
+  // （教师可能没有系统账号 → 拿不到 campusId）。harness 已把 dtTeacher1/dtTeacherC2 灌入通讯录。
+
+  it('绑定通讯录联系人 → 201，GET 回读 teacherDingtalkId', async () => {
     const c = await h.loginAs('admin');
     const g = await c.req('POST', '/api/v1/grades', { body: { name: `绑师年级${Date.now()}`, sort_order: 9 } });
     const cls = await c.req('POST', '/api/v1/classes', {
-      body: { grade_id: g.json.data.id, name: '绑定班', class_teacher: '李老师', teacher_user_id: seed.teacher.id },
+      body: { grade_id: g.json.data.id, name: '绑定班', class_teacher: '李老师', teacher_dingtalk_id: seed.dtTeacher1 },
     });
     expect(cls.status).toBe(201);
-    expect(cls.json.data.teacherUserId).toBe(seed.teacher.id);
+    expect(cls.json.data.teacherDingtalkId).toBe(seed.dtTeacher1);
     // GET 列表能读到
     const list = await c.req('GET', '/api/v1/classes', { query: { grade_id: g.json.data.id } });
-    expect(list.json.data[0].teacherUserId).toBe(seed.teacher.id);
+    expect(list.json.data[0].teacherDingtalkId).toBe(seed.dtTeacher1);
   });
 
-  it('不存在的 teacher_user_id → 400', async () => {
+  it('不在通讯录的 userid → 400（须先引入组织通讯录）', async () => {
     const c = await h.loginAs('admin');
     const g = await c.req('POST', '/api/v1/grades', { body: { name: `绑师年级2-${Date.now()}`, sort_order: 9 } });
     const r = await c.req('POST', '/api/v1/classes', {
-      body: { grade_id: g.json.data.id, name: '坏绑定班', teacher_user_id: 'nonexistent-user-uuid' },
+      body: { grade_id: g.json.data.id, name: '坏绑定班', teacher_dingtalk_id: 'nonexistent-dingtalk-id' },
     });
     expect(r.status).toBe(400);
   });
 
-  it('绑定 student（非教师）→ 400', async () => {
+  it('通讯录是组织级：绑定另一位联系人（跨校区）也成功（不按校区拦）', async () => {
     const c = await h.loginAs('admin');
     const g = await c.req('POST', '/api/v1/grades', { body: { name: `绑师年级3-${Date.now()}`, sort_order: 9 } });
+    // dtTeacherC2 是 c2 教师的钉钉 userid，但通讯录无校区维度 → c1 的班也能绑（数据录入责任在管理员）
     const r = await c.req('POST', '/api/v1/classes', {
-      body: { grade_id: g.json.data.id, name: '学生班', teacher_user_id: seed.student.id },
+      body: { grade_id: g.json.data.id, name: '跨区绑定班', teacher_dingtalk_id: seed.dtTeacherC2 },
     });
-    expect(r.status).toBe(400); // 角色不是 teacher
-  });
-
-  it('绑定他校区教师 → 400（防跨校区误绑）', async () => {
-    const c = await h.loginAs('admin');
-    const g = await c.req('POST', '/api/v1/grades', { body: { name: `绑师年级4-${Date.now()}`, sort_order: 9 } });
-    const r = await c.req('POST', '/api/v1/classes', {
-      body: { grade_id: g.json.data.id, name: '跨区班', teacher_user_id: seed.teacherC2.id },
-    });
-    expect(r.status).toBe(400);
+    expect(r.status).toBe(201);
+    expect(r.json.data.teacherDingtalkId).toBe(seed.dtTeacherC2);
   });
 
   it('PUT 更新绑定 + 传 null 可解绑', async () => {
@@ -98,13 +96,13 @@ describe('班级班主任绑定（teacher_user_id，2026-10-23 新增）', () =>
     const cls = await c.req('POST', '/api/v1/classes', { body: { grade_id: g.json.data.id, name: '改绑班' } });
     const id = cls.json.data.id;
     // 绑定
-    const bound = await c.req('PUT', `/api/v1/classes/${id}`, { body: { name: '改绑班', teacher_user_id: seed.teacher.id } });
+    const bound = await c.req('PUT', `/api/v1/classes/${id}`, { body: { name: '改绑班', teacher_dingtalk_id: seed.dtTeacher1 } });
     expect(bound.status).toBe(200);
-    expect(bound.json.data.teacherUserId).toBe(seed.teacher.id);
+    expect(bound.json.data.teacherDingtalkId).toBe(seed.dtTeacher1);
     // 解绑
-    const unbound = await c.req('PUT', `/api/v1/classes/${id}`, { body: { name: '改绑班', teacher_user_id: null } });
+    const unbound = await c.req('PUT', `/api/v1/classes/${id}`, { body: { name: '改绑班', teacher_dingtalk_id: null } });
     expect(unbound.status).toBe(200);
-    expect(unbound.json.data.teacherUserId).toBeNull();
+    expect(unbound.json.data.teacherDingtalkId).toBeNull();
   });
 });
 
