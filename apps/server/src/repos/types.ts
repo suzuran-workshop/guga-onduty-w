@@ -57,6 +57,9 @@ export interface ClassesRepo {
 // ── 值周小组（成员双写：dutyGroups.members + userProfiles.groupId，事务一致）──
 export interface GroupsRepo {
   listByCampus(campusId: string): Promise<DutyGroup[]>;
+  /** 2026-10-23 新增：按 id 取单个小组（供 assertEntityOwnership 校验归属）。
+   *  此前缺失，导致路由只能用 listByCampus + find 做 O(n) 查找，且 admin 无法跨校区管理。 */
+  findById(id: string): Promise<DutyGroup | null>;
   create(input: { campusId: string; name: string; members?: string[] }): Promise<DutyGroup>;
   update(id: string, input: { name: string; members?: string[] }): Promise<DutyGroup | null>;
   remove(id: string): Promise<void>;
@@ -182,6 +185,8 @@ export interface StatisticsRepo {
 // ── 流动红旗 ────────────────────────────────────────────────────────
 export interface AwardsRepo {
   listByCampus(campusId: string, week?: string): Promise<Award[]>;
+  /** 2026-10-23 新增：按 id 取单个奖项（供 DELETE 校验存在性，避免删不存在的 id 静默返回成功） */
+  findById(id: string): Promise<Award | null>;
   /**
    * 候选参考（需求：仅管理员人工颁发，系统只提供参考）。**只读，不落库**。
    * 由 ranking 按年级取第一名派生；alreadyAwarded 标记该周是否已颁（避免重复）。

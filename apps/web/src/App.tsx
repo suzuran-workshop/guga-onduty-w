@@ -52,6 +52,19 @@ function RequireRole({ roles, children }: { roles: UserRole[]; children: ReactEl
   return children;
 }
 
+/**
+ * 首页按角色分流（2026-10-23，需求 2）。
+ *
+ * ⚠ 不能直接渲染 DashboardPage：看板调 /statistics/dashboard，而统计域已收紧为
+ * admin/teacher only，student 落地即 403 白屏。student 的唯一模块是「评价」，
+ * 故其首页直接就是评价页——落地即可打分，也避免侧边栏出现一堆点进去就报错的入口。
+ */
+function HomeRoute() {
+  const { profile } = useAuth();
+  if (profile?.role === 'student') return <Navigate to="/records" replace />;
+  return <DashboardPage />;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -63,10 +76,24 @@ export default function App() {
           <ProtectedRoute>
             <Layout>
               <Routes>
-                <Route path="/" element={<DashboardPage />} />
+                <Route path="/" element={<HomeRoute />} />
                 <Route path="/records" element={<RecordPage />} />
-                <Route path="/statistics" element={<StatisticsPage />} />
-                <Route path="/summary" element={<SummaryPage />} />
+                <Route
+                  path="/statistics"
+                  element={
+                    <RequireRole roles={['admin', 'teacher']}>
+                      <StatisticsPage />
+                    </RequireRole>
+                  }
+                />
+                <Route
+                  path="/summary"
+                  element={
+                    <RequireRole roles={['admin', 'teacher']}>
+                      <SummaryPage />
+                    </RequireRole>
+                  }
+                />
                 <Route
                   path="/appeals"
                   element={
@@ -75,7 +102,14 @@ export default function App() {
                     </RequireRole>
                   }
                 />
-                <Route path="/awards" element={<AwardsPage />} />
+                <Route
+                  path="/awards"
+                  element={
+                    <RequireRole roles={['admin', 'teacher']}>
+                      <AwardsPage />
+                    </RequireRole>
+                  }
+                />
                 <Route
                   path="/config"
                   element={

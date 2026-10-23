@@ -36,6 +36,11 @@ export function createGroupsRepo(ctx: DrizzleCtx): GroupsRepo {
       return rows.map(toGroup);
     },
 
+    async findById(id): Promise<DutyGroup | null> {
+      const rows = await db.select().from(dutyGroups).where(eq(dutyGroups.id, id)).limit(1);
+      return rows[0] ? toGroup(rows[0]) : null;
+    },
+
     async create(input): Promise<DutyGroup> {
       const id = crypto.randomUUID();
       const members = input.members ?? [];

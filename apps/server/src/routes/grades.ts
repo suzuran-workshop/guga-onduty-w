@@ -7,20 +7,12 @@
  *  - 写校区走 resolveWriteCampusId（admin 可指定，非 admin 强制自己校区）。
  *  - PUT/DELETE 先 findById 校验归属（非 admin 不得跨校区），不泄露跨校区实体存在性。
  *  - 唯一约束冲突（campus+name 重复）转 409。
+ *  - 2026-10-23：归属校验收敛到 middleware 的 assertEntityOwnership（消除本文件的局部副本）。
  */
 import { Hono } from 'hono';
 import type { RouteDeps } from './_deps.js';
-import { getProfile, requireRole, resolveCampusId, resolveWriteCampusId } from '../middleware/profile.js';
+import { assertEntityOwnership, requireRole, resolveCampusId, resolveWriteCampusId } from '../middleware/profile.js';
 import { ok, created, ApiError, isUniqueViolation } from '../http/respond.js';
-
-/** 非 admin 校验年级归属；admin 放行 */
-function assertOwnership(c: any, grade: { campusId: string } | null) {
-  if (!grade) throw ApiError.notFound('年级不存在');
-  const profile = getProfile(c);
-  if (profile.role !== 'admin' && grade.campusId !== profile.campusId) {
-    throw ApiError.notFound('年级不存在');
-  }
-}
 
 export function createGradeRoutes(deps: RouteDeps): Hono {
   const { repos } = deps;
@@ -55,7 +47,7 @@ export function createGradeRoutes(deps: RouteDeps): Hono {
     const id = c.req.param('id');
     const body = await c.req.json<{ name: string; sort_order?: number }>().catch(() => null as any);
     if (!body?.name) throw ApiError.badRequest('缺少 name');
-    assertOwnership(c, await repos.grades.findById(id));
+    assertEntityOwnership(c, await repos.grades.findById(id), '年级');
     const grade = await repos.grades.update(id, { name: body.name, sortOrder: body.sort_order ?? 0 });
     if (!grade) throw ApiError.notFound('年级不存在');
     return ok(c, grade);
@@ -64,10 +56,9 @@ export function createGradeRoutes(deps: RouteDeps): Hono {
   // DELETE /:id —— admin 删年级
   app.delete('/:id', requireRole('admin'), async (c) => {
     const id = c.req.param('id');
-    const grade = await repos.grades.findById(id);
-    assertOwnership(c, grade); // 校验存在 + 归属（null/跨校区抛 404）
+    const grade = assertEntityOwnership(c, await repos.grades.findById(id), '年级'); // 校验存在 + 归属（null/跨校区抛 404）
     // REVIEW #8：年级下有班级则拒删（防 classes 孤儿）
-    const classes = await repos.classes.listByCampus(grade!.campusId, id);
+    const classes = await repos.classes.listByCampus(grade.campusId, id);
     if (classes.length > 0) throw ApiError.conflict(`该年级下仍有 ${classes.length} 个班级，无法删除`);
     await repos.grades.remove(id);
     return ok(c, { deleted: true });

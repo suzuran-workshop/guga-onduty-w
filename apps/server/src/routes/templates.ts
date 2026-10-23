@@ -8,22 +8,12 @@
  *  - listByCampus 含展开 tags（repo 已批量查，无 N+1）。
  *  - importMany 事务化 + tagId 校区校验（repo 已实现）；请求体 tag_ids → tagIds。
  *  - PUT/DELETE 先 findById 校验归属（非 admin 不得跨校区）。
+ *  - 2026-10-23：归属校验收敛到 middleware 的 assertEntityOwnership（消除本文件的局部副本）。
  */
 import { Hono } from 'hono';
-import type { Context } from 'hono';
 import type { RouteDeps } from './_deps.js';
-import { getProfile, requireRole, resolveCampusId, resolveWriteCampusId } from '../middleware/profile.js';
+import { assertEntityOwnership, requireRole, resolveCampusId, resolveWriteCampusId } from '../middleware/profile.js';
 import { ok, created, ApiError } from '../http/respond.js';
-import type { Template } from '@guga-onduty-w/shared';
-
-function assertOwnership(c: Context, tpl: Template | null): Template {
-  if (!tpl) throw ApiError.notFound('模板不存在');
-  const profile = getProfile(c);
-  if (profile.role !== 'admin' && tpl.campusId !== profile.campusId) {
-    throw ApiError.notFound('模板不存在');
-  }
-  return tpl;
-}
 
 export function createTemplateRoutes(deps: RouteDeps): Hono {
   const { repos } = deps;
@@ -36,7 +26,8 @@ export function createTemplateRoutes(deps: RouteDeps): Hono {
   });
 
   // GET /export —— 导出（⚠ 必须在 /:id 之前注册，避免路由冲突）
-  app.get('/export', async (c) => {
+  // 2026-10-23：收紧为 admin only，与 POST /import 对称（原 export 敞开，student 可导出全校区模板配置）。
+  app.get('/export', requireRole('admin'), async (c) => {
     const data = await repos.templates.exportByCampus(resolveCampusId(c));
     // 保持旧契约：tag_ids 字段名（前端导出/导入对称）
     return ok(c, data.map((d) => ({ name: d.name, tag_ids: d.tagIds })));
@@ -58,7 +49,7 @@ export function createTemplateRoutes(deps: RouteDeps): Hono {
 
   // GET /:id —— 模板详情（含展开 tags）
   app.get('/:id', async (c) => {
-    const tpl = assertOwnership(c, await repos.templates.findById(c.req.param('id')));
+    const tpl = assertEntityOwnership(c, await repos.templates.findById(c.req.param('id')), '模板');
     return ok(c, tpl);
   });
 
@@ -82,7 +73,7 @@ export function createTemplateRoutes(deps: RouteDeps): Hono {
     const id = c.req.param('id');
     const body = await c.req.json<{ name: string; tag_ids: string[] }>().catch(() => null as any);
     if (!body?.name) throw ApiError.badRequest('缺少 name');
-    assertOwnership(c, await repos.templates.findById(id));
+    assertEntityOwnership(c, await repos.templates.findById(id), '模板');
     const tpl = await repos.templates.update(id, { name: body.name, tagIds: body.tag_ids ?? [] });
     if (!tpl) throw ApiError.notFound('模板不存在');
     return ok(c, tpl);
@@ -91,7 +82,7 @@ export function createTemplateRoutes(deps: RouteDeps): Hono {
   // DELETE /:id —— admin 删模板
   app.delete('/:id', requireRole('admin'), async (c) => {
     const id = c.req.param('id');
-    assertOwnership(c, await repos.templates.findById(id));
+    assertEntityOwnership(c, await repos.templates.findById(id), '模板');
     await repos.templates.remove(id);
     return ok(c, { deleted: true });
   });

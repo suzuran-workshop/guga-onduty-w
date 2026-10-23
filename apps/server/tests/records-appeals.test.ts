@@ -407,11 +407,14 @@ describe('申诉状态机（事务联动）', () => {
 
 describe('SSE 实时推送（修复旧前端从没接的死代码）', () => {
   it('创建记录时 EventSource 收到 record_created', async () => {
+    // 2026-10-23：SSE 属展示面，不在 student 白名单（学生只能评价）。
+    // 本测试意图是「建记录 → 触发事件」，故拆开角色：student 建记录，admin 订阅（贴合真实大屏场景）。
+    const admin = await h.loginAs('admin');
     const stu = await h.loginAs('student1');
     const events: string[] = [];
     const ac = new AbortController();
     const ssePromise = (async () => {
-      const res = await fetch(`${h.base}/api/v1/sse/records`, { headers: { Cookie: stu.jar.header() }, signal: ac.signal });
+      const res = await fetch(`${h.base}/api/v1/sse/records`, { headers: { Cookie: admin.jar.header() }, signal: ac.signal });
       const reader = res.body!.getReader();
       const dec = new TextDecoder();
       try {
@@ -428,5 +431,12 @@ describe('SSE 实时推送（修复旧前端从没接的死代码）', () => {
     await Promise.race([ssePromise, new Promise((r) => setTimeout(r, 2000))]);
     ac.abort();
     expect(events.length).toBeGreaterThan(0);
+  });
+
+  it('student 订阅 SSE → 403（展示面不对学生开放）', async () => {
+    const stu = await h.loginAs('student1');
+    const res = await fetch(`${h.base}/api/v1/sse/records`, { headers: { Cookie: stu.jar.header() } });
+    expect(res.status).toBe(403);
+    res.body?.cancel().catch(() => {});
   });
 });

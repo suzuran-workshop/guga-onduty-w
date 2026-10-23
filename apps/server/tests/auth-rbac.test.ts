@@ -17,6 +17,15 @@ afterAll(async () => {
   await h.shutdown();
 });
 
+/** 建一条评价记录的 form（加分标签故无需图片；用于闸门白名单的正反路径测试） */
+function recordFormForStudent(classId: string, tagId: string): FormData {
+  const f = new FormData();
+  f.append('class_ids', classId);
+  f.set('week', '2026-W41');
+  f.append('tag_ids', tagId);
+  return f;
+}
+
 describe('认证链', () => {
   it('正确密码登录成功并下发 cookie', async () => {
     const c = h.client();
@@ -107,6 +116,82 @@ describe('RBAC（修复旧代码 student 可写 12 端点）', () => {
     const c = await h.loginAs('admin');
     const r = await c.req('POST', '/api/v1/tags', { body: { name: 'admin建', score: 1, category: 'positive' } });
     expect(r.status).toBe(201);
+  });
+});
+
+describe('student 模块闸门（需求 2：学生只能评价，默认拒绝）', () => {
+  // 这四个是原「P1 越权读」：无守卫时 student 可分页读取全校区申诉单（含理由/审批意见）、
+  // 下载全校区明细 CSV、读系统配置、导出全校区模板。
+  it('student 不能读申诉列表（403，修复原全校区申诉单泄漏）', async () => {
+    const c = await h.loginAs('student1');
+    expect((await c.req('GET', '/api/v1/appeals')).status).toBe(403);
+  });
+
+  it('student 不能导出统计 CSV（403，修复原全校区明细泄漏）', async () => {
+    const c = await h.loginAs('student1');
+    expect((await c.req('GET', '/api/v1/statistics/export')).status).toBe(403);
+  });
+
+  it('student 不能读系统设置（403）', async () => {
+    const c = await h.loginAs('student1');
+    expect((await c.req('GET', '/api/v1/settings')).status).toBe(403);
+  });
+
+  it('student 不能导出模板（403）', async () => {
+    const c = await h.loginAs('student1');
+    expect((await c.req('GET', '/api/v1/templates/export')).status).toBe(403);
+  });
+
+  it('student 不能读统计/红旗/小结/小组/校区/年级（403，非评价模块）', async () => {
+    const c = await h.loginAs('student1');
+    const paths = [
+      '/api/v1/statistics/ranking',
+      '/api/v1/statistics/dashboard',
+      '/api/v1/statistics/trend?class_id=' + seed.cls1.id,
+      '/api/v1/awards',
+      '/api/v1/summaries',
+      '/api/v1/groups',
+      '/api/v1/campuses',
+      '/api/v1/grades',
+      '/api/v1/users',
+    ];
+    for (const p of paths) {
+      const r = await c.req('GET', p);
+      expect(r.status, `GET ${p} 应对 student 403`).toBe(403);
+    }
+  });
+
+  it('student 不能读记录调分日志（403，含审批意见的监督面信息）', async () => {
+    const admin = await h.loginAs('admin');
+    const created = await admin.req('POST', '/api/v1/records', {
+      body: recordFormForStudent(seed.cls1.id, seed.tagPos.id),
+      isForm: true,
+    });
+    const id = created.json.data[0].id;
+    const c = await h.loginAs('student1');
+    expect((await c.req('GET', `/api/v1/records/${id}/logs`)).status).toBe(403);
+  });
+
+  it('student 白名单仍可用：标签/班级/模板/自身身份 + 建记录（评价链完整）', async () => {
+    const c = await h.loginAs('student1');
+    expect((await c.req('GET', '/api/v1/tags')).status).toBe(200);
+    expect((await c.req('GET', '/api/v1/classes')).status).toBe(200);
+    expect((await c.req('GET', '/api/v1/templates')).status).toBe(200);
+    expect((await c.req('GET', '/api/v1/auth/me')).status).toBe(200);
+    expect((await c.req('GET', '/api/v1/records')).status).toBe(200);
+    const r = await c.req('POST', '/api/v1/records', {
+      body: recordFormForStudent(seed.cls1.id, seed.tagPos.id), isForm: true,
+    });
+    expect(r.status).toBe(201);
+  });
+
+  it('闸门不误伤 teacher/admin（非 student 角色直接放行到各自 RBAC）', async () => {
+    const t = await h.loginAs('teacher1');
+    expect((await t.req('GET', '/api/v1/statistics/ranking')).status).toBe(200);
+    expect((await t.req('GET', '/api/v1/appeals')).status).toBe(200);
+    const a = await h.loginAs('admin');
+    expect((await a.req('GET', '/api/v1/settings')).status).toBe(200);
+    expect((await a.req('GET', '/api/v1/templates/export')).status).toBe(200);
   });
 });
 

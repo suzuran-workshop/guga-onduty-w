@@ -34,13 +34,15 @@ interface NavItem {
   exact?: boolean;
 }
 
+// 2026-10-23（需求 2）：student 只能评价 → 除「值周记录」外全部入口对 student 隐藏。
+// 与后端 requireStudentScope 白名单同源；隐藏入口可避免 student 看到点进去就 403 的菜单。
 const NAV_ITEMS: NavItem[] = [
-  { to: '/', i18nKey: 'nav.dashboard', icon: <LayoutDashboard className="h-4 w-4" />, exact: true },
+  { to: '/', i18nKey: 'nav.dashboard', icon: <LayoutDashboard className="h-4 w-4" />, exact: true, roles: ['admin', 'teacher'] },
   { to: '/records', i18nKey: 'nav.records', icon: <ClipboardCheck className="h-4 w-4" /> },
-  { to: '/statistics', i18nKey: 'nav.stats', icon: <BarChart3 className="h-4 w-4" /> },
-  { to: '/summary', i18nKey: 'nav.summary', icon: <FileText className="h-4 w-4" /> },
+  { to: '/statistics', i18nKey: 'nav.stats', icon: <BarChart3 className="h-4 w-4" />, roles: ['admin', 'teacher'] },
+  { to: '/summary', i18nKey: 'nav.summary', icon: <FileText className="h-4 w-4" />, roles: ['admin', 'teacher'] },
   { to: '/appeals', i18nKey: 'nav.appeals', icon: <Scale className="h-4 w-4" />, roles: ['admin', 'teacher'] },
-  { to: '/awards', i18nKey: 'nav.awards', icon: <Flag className="h-4 w-4" /> },
+  { to: '/awards', i18nKey: 'nav.awards', icon: <Flag className="h-4 w-4" />, roles: ['admin', 'teacher'] },
   { to: '/config', i18nKey: 'nav.config', icon: <Settings className="h-4 w-4" />, roles: ['admin'] },
   { to: '/settings', i18nKey: 'nav.settings', icon: <SlidersHorizontal className="h-4 w-4" />, roles: ['admin'] },
 ];
@@ -53,10 +55,14 @@ export function Layout({ children }: { children: ReactNode }) {
 
   const role = profile?.role;
   const visibleNav = NAV_ITEMS.filter((item) => !item.roles || (role && item.roles.includes(role)));
+  // student 是否只剩评价一个模块（用于隐藏大屏等展示面入口）
+  const studentOnly = role === 'student';
 
-  // 当前页标题（反查 nav）
+  // 当前页标题（反查 nav）。兜底用 visibleNav[0] 而非 NAV_ITEMS[0]：
+  // 否则 student 在 /records 时标题会错显示成「看板」（NAV_ITEMS[0] 对 student 不可见）。
   const current =
     NAV_ITEMS.find((n) => (n.exact ? location.pathname === n.to : location.pathname.startsWith(n.to) && n.to !== '/')) ??
+    visibleNav[0] ??
     NAV_ITEMS[0];
   const pageTitle = t(current.i18nKey);
   const displayName = profile?.displayName ?? '';
@@ -90,10 +96,13 @@ export function Layout({ children }: { children: ReactNode }) {
           ))}
         </nav>
         <div className="border-t p-2">
-          <Button variant="ghost" className="w-full justify-start gap-2" onClick={() => navigate('/bigscreen')}>
-            <Presentation className="h-4 w-4" />
-            {t('nav.bigscreen')}
-          </Button>
+          {/* 大屏属展示面（数据源为 statistics + SSE，均已对 student 关闭），故 student 不显示入口 */}
+          {!studentOnly && (
+            <Button variant="ghost" className="w-full justify-start gap-2" onClick={() => navigate('/bigscreen')}>
+              <Presentation className="h-4 w-4" />
+              {t('nav.bigscreen')}
+            </Button>
+          )}
         </div>
       </aside>
 
@@ -122,10 +131,12 @@ export function Layout({ children }: { children: ReactNode }) {
                 {campusName || t('app.title')}
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => navigate('/bigscreen')}>
-                <Presentation className="mr-2 h-4 w-4" />
-                {t('nav.bigscreen')}
-              </DropdownMenuItem>
+              {!studentOnly && (
+                <DropdownMenuItem onClick={() => navigate('/bigscreen')}>
+                  <Presentation className="mr-2 h-4 w-4" />
+                  {t('nav.bigscreen')}
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem
                 onClick={async () => {
                   await logout();

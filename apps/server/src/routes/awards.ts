@@ -59,8 +59,13 @@ export function createAwardRoutes(deps: RouteDeps): Hono {
   });
 
   // DELETE /:id —— admin 删奖项
+  // 2026-10-23：补存在性校验（原实现删不存在的 id 也返回 {deleted:true}，静默成功）。
+  // 校区归属无需额外校验：本端点已是 admin only，而 admin 按设计可跨校区管理
+  // （与 resolveCampusId 的 admin 语义一致），非 admin 根本到不了这里。
   app.delete('/:id', requireRole('admin'), async (c) => {
-    await repos.awards.remove(c.req.param('id'));
+    const id = c.req.param('id');
+    if (!(await repos.awards.findById(id))) throw ApiError.notFound('奖项不存在');
+    await repos.awards.remove(id);
     return ok(c, { deleted: true });
   });
 

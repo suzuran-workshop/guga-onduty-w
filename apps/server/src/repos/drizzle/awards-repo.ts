@@ -155,6 +155,17 @@ export function createAwardsRepo(ctx: DrizzleCtx): AwardsRepo {
       return created;
     },
 
+    async findById(id): Promise<Award | null> {
+      const rows = await db
+        .select(projection)
+        .from(awards)
+        .innerJoin(classes, eq(awards.classId, classes.id))
+        .innerJoin(grades, eq(classes.gradeId, grades.id))
+        .where(eq(awards.id, id))
+        .limit(1);
+      return rows[0] ? toAward(rows[0]) : null;
+    },
+
     async remove(id): Promise<void> {
       await db.delete(awards).where(eq(awards.id, id)).run();
     },

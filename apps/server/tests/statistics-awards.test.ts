@@ -92,12 +92,25 @@ describe('统计排名 ranking（有效口径）', () => {
     expect(top.totalScore).toBeGreaterThanOrEqual(10);
   });
 
-  it('非 admin 排名按本校区隔离', async () => {
-    const c = await h.loginAs('student1');
+  it('非 admin 排名按本校区隔离（teacher）', async () => {
+    // 2026-10-23：改用 teacher 而非 student 验证「非 admin 强制本校区」——
+    // 统计域已收紧为 admin/teacher only（student 属展示面之外的角色，见需求 2），
+    // 故 student 不再是本测试的有效载体；teacher 同为「非 admin」且有权读统计。
+    const c = await h.loginAs('teacher1');
     const r = await c.req('GET', '/api/v1/statistics/ranking', { query: { week: '2026-W41' } });
     expect(r.status).toBe(200);
     // 返回的都是 c1 的班级
     expect(r.json.data.every((x: any) => x.className === '1班' || x.className === '2班')).toBe(true);
+  });
+
+  it('teacher 带 ?campus_id= 指向他校区 → 仍被强制本校区（假隔离修复）', async () => {
+    const c = await h.loginAs('teacher1'); // c1
+    const r = await c.req('GET', '/api/v1/statistics/ranking', {
+      query: { week: '2026-W41', campus_id: seed.c2.id },
+    });
+    expect(r.status).toBe(200);
+    // 参数被忽略：不得出现 c2 的数据（c2 的班也叫「1班」，故按 id 判定）
+    expect(r.json.data.every((x: any) => x.classId === seed.cls1.id || x.classId === seed.cls2.id)).toBe(true);
   });
 });
 
@@ -256,5 +269,11 @@ describe('流动红旗 awards（候选参考 + 人工颁发）', () => {
     expect(r.status).toBe(200);
     const after = await admin.req('GET', '/api/v1/awards', { query: { week: '2026-W43' } });
     expect(after.json.data.length).toBe(list.json.data.length - 1);
+  });
+
+  it('删除不存在的奖项 → 404（不再静默返回 deleted:true）', async () => {
+    const admin = await h.loginAs('admin');
+    const r = await admin.req('DELETE', '/api/v1/awards/nonexistent-award-uuid');
+    expect(r.status).toBe(404);
   });
 });
