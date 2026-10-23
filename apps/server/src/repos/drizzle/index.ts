@@ -25,6 +25,11 @@ import { createSummaryRepo } from './summary-repo.js';
 import { createStatisticsRepo } from './statistics-repo.js';
 import { createAwardsRepo } from './awards-repo.js';
 import { createSettingsRepo } from './settings-repo.js';
+import {
+  createDingtalkContactsRepo,
+  createNotificationsRepo,
+  createAppealTokensRepo,
+} from './dingtalk-repo.js';
 
 export interface CreateDrizzleReposOptions {
   db: Database;
@@ -58,5 +63,8 @@ export function createDrizzleRepos(opts: CreateDrizzleReposOptions): Repos {
     statistics: createStatisticsRepo(ctx),
     awards: createAwardsRepo(ctx),
     settings: createSettingsRepo(ctx),
+    dingtalkContacts: createDingtalkContactsRepo(ctx),
+    notifications: createNotificationsRepo(ctx),
+    appealTokens: createAppealTokensRepo(ctx),
   };
 }

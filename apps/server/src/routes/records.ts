@@ -14,6 +14,7 @@ import type { RouteDeps } from './_deps.js';
 import { getProfile, requireRole, resolveCampusId } from '../middleware/profile.js';
 import { ok, created, ApiError, parsePagination } from '../http/respond.js';
 import { EventBus } from '../utils/event-bus.js';
+import { resolveDingtalkUserId } from '../platform/resolve-identity.js';
 import type { RecordStatus } from '@guga-onduty-w/shared';
 
 const IMAGE_NS = 'records'; // 命名空间基名；上传拼成 records/<campusId>（REVIEW #5）
@@ -22,7 +23,7 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB/张
 const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
 export function createRecordRoutes(deps: RouteDeps): Hono {
-  const { repos, storage } = deps;
+  const { repos, storage, auth } = deps;
   const app = new Hono();
 
   // GET / —— 分页列表（campusId 强制隔离）
@@ -195,10 +196,21 @@ export function createRecordRoutes(deps: RouteDeps): Hono {
     const record = await repos.records.findByIdWithDetails(recordId);
     if (!record) throw ApiError.notFound('记录不存在');
     if (record.campusId !== profile.campusId) throw ApiError.forbidden('不能跨校区申诉');
-    // 归属校验：班主任只能申诉自己任班主任的班。未绑定 teacherUserId 的班级一律拒绝
-    // （fail-closed：宁可要求管理员先绑定，也不放行任意同校区教师申诉）。
+    // 归属校验：班主任只能申诉自己任班主任的班。
+    // classes.teacherDingtalkId 存的是**钉钉 userid**，而登录态是 profile.userId（系统 users.id），
+    // 二者经 oauth2_identity_links 关联（教师用钉钉 OAuth 登录后 SDK 写入）→ 先解析成钉钉 userid 再比对。
+    // fail-closed：未绑定班主任的班、或解析不出钉钉身份（如账密登录的教师），一律拒绝，
+    // 并引导走钉钉推送里的免登录令牌链接（那条路径绑定 teacherDingtalkId，不依赖此解析）。
     const ownership = await repos.classes.findOwnership(record.classId);
-    if (!ownership || ownership.teacherUserId !== profile.userId) {
+    if (!ownership?.teacherDingtalkId) {
+      throw ApiError.forbidden('该班级未绑定班主任，无法申诉');
+    }
+    const teacherDingtalkId = await resolveDingtalkUserId(auth.linkStore, profile.userId);
+    if (!teacherDingtalkId) {
+      // 账密登录的教师无法在系统内证明「我是那个钉钉班主任」→ 引导走钉钉免登录链接
+      throw ApiError.forbidden('请用钉钉收到的申诉链接提交（系统内申诉需先用钉钉登录以关联身份）');
+    }
+    if (ownership.teacherDingtalkId !== teacherDingtalkId) {
       throw ApiError.forbidden('只能对本班记录发起申诉');
     }
     if (record.status !== 'active') throw ApiError.badRequest('仅 active 记录可申诉');

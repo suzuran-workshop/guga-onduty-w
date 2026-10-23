@@ -14,6 +14,8 @@ import type {
   Campus, Grade, Class, DutyGroup, Tag, Template, RecordWithDetails, RecordLog,
   Appeal, AppealWithDetails, DailySummary, Award, AwardCandidate, UserView, UserProfile, User,
   ClassRanking, TrendPoint, DashboardStats, RecordStatus, UserRole, Pagination,
+  DingtalkContact, DingtalkContactInput, NotificationLog, NotificationLogInput,
+  NotificationKind, NotificationStatus,
 } from '@guga-onduty-w/shared';
 
 /** 分页结果 */
@@ -46,11 +48,11 @@ export interface ClassesRepo {
   listByCampus(campusId: string, gradeId?: string): Promise<Class[]>;
   findById(id: string): Promise<Class | null>;
   /** 记录创建时取校区/年级归属 + 班主任（申诉校验「只能申诉自己班」用） */
-  findOwnership(id: string): Promise<{ campusId: string; gradeId: string; teacherUserId: string | null } | null>;
+  findOwnership(id: string): Promise<{ campusId: string; gradeId: string; teacherDingtalkId: string | null } | null>;
   /** 反查某教师任班主任的班级（钉钉周报按教师聚合、申诉归属校验用） */
-  listByTeacher(teacherUserId: string): Promise<Class[]>;
-  create(input: { campusId: string; gradeId: string; name: string; classTeacher?: string | null; teacherUserId?: string | null }): Promise<Class>;
-  update(id: string, input: { name: string; classTeacher?: string | null; teacherUserId?: string | null }): Promise<Class | null>;
+  listByTeacher(teacherDingtalkId: string): Promise<Class[]>;
+  create(input: { campusId: string; gradeId: string; name: string; classTeacher?: string | null; teacherDingtalkId?: string | null }): Promise<Class>;
+  update(id: string, input: { name: string; classTeacher?: string | null; teacherDingtalkId?: string | null }): Promise<Class | null>;
   remove(id: string): Promise<void>;
 }
 
@@ -208,6 +210,58 @@ export interface SettingsRepo {
   upsertMany(campusId: string, entries: { key: string; value: string }[]): Promise<void>; // 事务
 }
 
+// ── 钉钉通讯录缓存（2026-10-23，需求 4）──────────────────────────────
+export interface DingtalkContactsRepo {
+  /** 批量 upsert（按 userId 主键）；返回实际写入条数。同步整个组织通讯录时调用 */
+  upsertMany(contacts: DingtalkContactInput[]): Promise<number>;
+  /** 全量列表（可按姓名模糊过滤，供 ConfigPage 班主任下拉搜索） */
+  list(filter?: { nameLike?: string; limit?: number }): Promise<DingtalkContact[]>;
+  findByUserId(userId: string): Promise<DingtalkContact | null>;
+  /** 按姓名精确匹配（可能重名 → 返回多条，由调用方决定如何处理） */
+  findByName(name: string): Promise<DingtalkContact[]>;
+}
+
+// ── 通知日志（2026-10-23，需求 4）───────────────────────────────────
+export interface NotificationsRepo {
+  /**
+   * 入库一条通知（初始 pending）。
+   * dedupeKey 冲突（周报重复触发）→ 返回 null，调用方据此跳过（幂等）。
+   */
+  create(input: NotificationLogInput): Promise<NotificationLog | null>;
+  /** 部分更新（只改传入的字段）。status 可选：拿到 taskId 时先只记 taskId，回执后再定状态 */
+  update(id: string, input: {
+    status?: NotificationStatus;
+    providerTaskId?: string | null;
+    error?: string | null;
+    sentAt?: number | null;
+  }): Promise<void>;
+  findById(id: string): Promise<NotificationLog | null>;
+  list(filter: {
+    campusId: string; status?: NotificationStatus; kind?: NotificationKind;
+    recordId?: string; page: number; pageSize: number;
+  }): Promise<Paged<NotificationLog>>;
+  /** 取待发送（pending）的通知，用于凭证到位后补发 */
+  listPending(campusId?: string, limit?: number): Promise<NotificationLog[]>;
+}
+
+// ── 申诉令牌（2026-10-23，需求 4：教师免登录申诉）────────────────────
+export interface AppealTokensRepo {
+  /** 创建令牌（存哈希，不存明文）；返回明文 token 供拼链接，仅此一次 */
+  create(input: { recordId: string; teacherDingtalkId: string; expiresAt: number }): Promise<{ plainToken: string }>;
+  /**
+   * 原子消费令牌（一次性）。返回令牌信息或 null。
+   * null 的三种原因由 reason 区分：not_found / expired / consumed —— 前端据此给准确提示，
+   * 避免「链接失效」这种无法自助排障的笼统文案。
+   * ⚠ 必须原子（UPDATE ... WHERE consumedAt IS NULL 并检查影响行数），
+   * 否则并发点击同一链接会重复提交申诉。
+   */
+  consume(tokenHash: string): Promise<{ ok: true; recordId: string; teacherDingtalkId: string } | { ok: false; reason: 'not_found' | 'expired' | 'consumed' }>;
+  /** 校验令牌可用性（申诉表单打开时用，不消费） */
+  peek(tokenHash: string): Promise<{ ok: true; recordId: string; teacherDingtalkId: string } | { ok: false; reason: 'not_found' | 'expired' | 'consumed' }>;
+  /** 清理过期令牌（定时器/补发时顺带做，避免表无限增长） */
+  purgeExpired(now?: number): Promise<number>;
+}
+
 /** 全部 repo 集合（createRepos 按形态装配） */
 export interface Repos {
   campuses: CampusesRepo;
@@ -223,4 +277,7 @@ export interface Repos {
   statistics: StatisticsRepo;
   awards: AwardsRepo;
   settings: SettingsRepo;
+  dingtalkContacts: DingtalkContactsRepo;
+  notifications: NotificationsRepo;
+  appealTokens: AppealTokensRepo;
 }

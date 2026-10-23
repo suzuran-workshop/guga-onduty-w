@@ -210,19 +210,44 @@ export async function seedStandard(h: Harness) {
   const student = await R.users.create({ campusId: c1.id, username: 'student1', password: '123456', displayName: '值周生A', role: 'student' });
   const student2 = await R.users.create({ campusId: c2.id, username: 'student2', password: '123456', displayName: '值周生B', role: 'student' });
   const teacherC2 = await R.users.create({ campusId: c2.id, username: 'teacher2', password: '123456', displayName: '赵老师', role: 'teacher' });
-  // 班级↔班主任权威绑定（2026-10-23 新增 teacherUserId）：
-  //  - cls1 绑 teacher（c1）→ teacher 可申诉 cls1 的记录
-  //  - cls2 故意**不绑** → 用于测「只能申诉自己班」的负向用例（未绑定班级一律 fail-closed 拒绝）
-  //  - clsC2 绑 teacherC2（c2）→ 用于跨校区申诉隔离测试
-  await R.classes.update(cls1.id, { name: '1班', classTeacher: '李老师', teacherUserId: teacher.id });
-  await R.classes.update(clsC2.id, { name: '1班', classTeacher: '赵老师', teacherUserId: teacherC2.id });
+
+  // ── 钉钉身份关联（2026-10-23）──────────────────────────────────
+  // classes.teacherDingtalkId 存的是**钉钉 userid**（非系统 users.id），推送与申诉归属校验都用它。
+  // 而系统内申诉需把「登录教师」解析成钉钉 userid，靠 auth SDK 的 oauth2_identity_links。
+  // 故这里模拟「教师已用钉钉 OAuth 登录过」：建 link（providerSub = 钉钉 userid）。
+  // userid 形状照实测真实值（数字串，如 0252163856461532927016），**不是 uuid**。
+  const dtTeacher1 = '0252163856461532927016';
+  const dtTeacherC2 = '5314054424-444663015';
+  await h.booted.auth.linkStore.create({ userId: teacher.id, provider: 'dingtalk', providerSub: dtTeacher1 });
+  await h.booted.auth.linkStore.create({ userId: teacherC2.id, provider: 'dingtalk', providerSub: dtTeacherC2 });
+
+  // 班级↔班主任权威绑定：
+  //  - cls1 绑 teacher 的钉钉 userid → teacher1 可申诉 cls1 的记录
+  //  - cls2 故意**不绑** → 测「未绑定班级一律 fail-closed 拒绝」
+  //  - clsC2 绑 teacherC2 的钉钉 userid → 跨校区申诉隔离测试
+  await R.classes.update(cls1.id, { name: '1班', classTeacher: '李老师', teacherDingtalkId: dtTeacher1 });
+  await R.classes.update(clsC2.id, { name: '1班', classTeacher: '赵老师', teacherDingtalkId: dtTeacherC2 });
+
+  // 通讯录缓存：管理员「引入组织通讯录」的结果（**不含家校**）。
+  // 班级绑定班主任时会校验 userid 必须在此表中，故测试也须先有联系人。
+  const now = Date.now();
+  await R.dingtalkContacts.upsertMany([
+    { userId: dtTeacher1, name: '李老师', mobile: '13800000001', title: '班主任', deptIds: [1], deptNames: ['技术部'], syncedAt: now },
+    { userId: dtTeacherC2, name: '赵老师', mobile: '13800000002', title: '班主任', deptIds: [2], deptNames: ['市场部'], syncedAt: now },
+  ]);
+
   const tagNeg = await R.tags.create({ campusId: c1.id, name: '迟到', score: -1, color: '#F44336', category: 'negative', isSystem: true });
   const tagPos = await R.tags.create({ campusId: c1.id, name: '卫生优秀', score: 2, color: '#4CAF50', category: 'positive', isSystem: true });
   // 0 分中性标签：申诉「调分」测试用（把 -1 调成 0，验证分数重算且不撤销记录）
   const tagNeu = await R.tags.create({ campusId: c1.id, name: '已整改', score: 0, color: '#9E9E9E', category: 'neutral', isSystem: false });
   const tagC2 = await R.tags.create({ campusId: c2.id, name: '迟到', score: -1, category: 'negative', isSystem: true });
   await R.settings.upsertMany(c1.id, [{ key: 'appeal_enabled', value: 'true' }]);
-  return { c1, c2, g1, g2, cls1, cls2, clsC2, admin, teacher, teacherC2, student, student2, tagNeg, tagPos, tagNeu, tagC2 };
+  return {
+    c1, c2, g1, g2, cls1, cls2, clsC2, admin, teacher, teacherC2, student, student2,
+    tagNeg, tagPos, tagNeu, tagC2,
+    /** 教师的钉钉 userid（测试断言推送目标 / 绑定校验用） */
+    dtTeacher1, dtTeacherC2,
+  };
 }
 
 /** 构造一个 1x1 PNG（图片上传测试用） */

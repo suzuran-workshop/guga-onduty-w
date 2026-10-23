@@ -73,8 +73,17 @@ async function main() {
   const teacher1 = await R.users.create({ campusId: c1.id, username: 'teacher1', password: '123456', displayName: '李老师', role: 'teacher' });
   const student1 = await R.users.create({ campusId: c1.id, username: 'student1', password: '123456', displayName: '值周生A', role: 'student' });
   await R.users.create({ campusId: c2.id, username: 'student2', password: '123456', displayName: '值周生B', role: 'student' });
-  // 绑定 cls1 班主任 = teacher1（申诉「只能申诉自己班」校验需要；见 routes/records.ts）
-  await R.classes.update(cls1.id, { name: '1班', classTeacher: '李老师', teacherUserId: teacher1.id });
+  // 班主任绑定（申诉「只能申诉自己班」校验需要；见 routes/records.ts）。
+  // classes.teacherDingtalkId 存**钉钉 userid**（非系统 users.id），系统内申诉需先把登录教师
+  // 解析成钉钉 userid（经 oauth2_identity_links）→ 这里模拟「教师已用钉钉登录过」。
+  // userid 形状照实测真实值（数字串，非 uuid）。
+  const dtTeacher1 = '0252163856461532927016';
+  await booted.auth.linkStore.create({ userId: teacher1.id, provider: 'dingtalk', providerSub: dtTeacher1 });
+  // 通讯录缓存：绑定校验要求 userid 已在「引入的组织通讯录」中
+  await R.dingtalkContacts.upsertMany([
+    { userId: dtTeacher1, name: '李老师', mobile: '13800000001', title: '班主任', deptIds: [1], deptNames: ['一校区'], syncedAt: Date.now() },
+  ]);
+  await R.classes.update(cls1.id, { name: '1班', classTeacher: '李老师', teacherDingtalkId: dtTeacher1 });
   const tagNeg = await R.tags.create({ campusId: c1.id, name: '迟到', score: -1, category: 'negative', isSystem: true });
 
   // 启动监听

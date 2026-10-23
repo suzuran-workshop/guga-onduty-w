@@ -1,7 +1,7 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "7bfb60e5-57e9-407b-ae45-9ee0014a2580",
+  "id": "116903eb-bc52-4a7f-91a8-502d77993001",
   "prevIds": [
     "16178e0f-4d93-4f14-b20c-50b1c2c7856b"
   ],
@@ -27,6 +27,10 @@
       "entityType": "tables"
     },
     {
+      "name": "appealTokens",
+      "entityType": "tables"
+    },
+    {
       "name": "appeals",
       "entityType": "tables"
     },
@@ -47,11 +51,19 @@
       "entityType": "tables"
     },
     {
+      "name": "dingtalkContacts",
+      "entityType": "tables"
+    },
+    {
       "name": "dutyGroups",
       "entityType": "tables"
     },
     {
       "name": "grades",
+      "entityType": "tables"
+    },
+    {
+      "name": "notificationLogs",
       "entityType": "tables"
     },
     {
@@ -404,6 +416,66 @@
       "autoincrement": false,
       "default": null,
       "generated": null,
+      "name": "tokenHash",
+      "entityType": "columns",
+      "table": "appealTokens"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "recordId",
+      "entityType": "columns",
+      "table": "appealTokens"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "teacherDingtalkId",
+      "entityType": "columns",
+      "table": "appealTokens"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "expiresAt",
+      "entityType": "columns",
+      "table": "appealTokens"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "consumedAt",
+      "entityType": "columns",
+      "table": "appealTokens"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "(unixepoch() * 1000)",
+      "generated": null,
+      "name": "createdAt",
+      "entityType": "columns",
+      "table": "appealTokens"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
       "name": "id",
       "entityType": "columns",
       "table": "appeals"
@@ -664,7 +736,7 @@
       "autoincrement": false,
       "default": null,
       "generated": null,
-      "name": "teacherUserId",
+      "name": "teacherDingtalkId",
       "entityType": "columns",
       "table": "classes"
     },
@@ -737,6 +809,96 @@
       "name": "createdAt",
       "entityType": "columns",
       "table": "dailySummaries"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "userId",
+      "entityType": "columns",
+      "table": "dingtalkContacts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "unionId",
+      "entityType": "columns",
+      "table": "dingtalkContacts"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "dingtalkContacts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "mobile",
+      "entityType": "columns",
+      "table": "dingtalkContacts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "title",
+      "entityType": "columns",
+      "table": "dingtalkContacts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "avatarUrl",
+      "entityType": "columns",
+      "table": "dingtalkContacts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "deptIds",
+      "entityType": "columns",
+      "table": "dingtalkContacts"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "deptNames",
+      "entityType": "columns",
+      "table": "dingtalkContacts"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "syncedAt",
+      "entityType": "columns",
+      "table": "dingtalkContacts"
     },
     {
       "type": "text",
@@ -827,6 +989,146 @@
       "name": "sortOrder",
       "entityType": "columns",
       "table": "grades"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "notificationLogs"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "campusId",
+      "entityType": "columns",
+      "table": "notificationLogs"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "recipientUserId",
+      "entityType": "columns",
+      "table": "notificationLogs"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "recipientPlatformId",
+      "entityType": "columns",
+      "table": "notificationLogs"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "kind",
+      "entityType": "columns",
+      "table": "notificationLogs"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'pending'",
+      "generated": null,
+      "name": "status",
+      "entityType": "columns",
+      "table": "notificationLogs"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "recordId",
+      "entityType": "columns",
+      "table": "notificationLogs"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "week",
+      "entityType": "columns",
+      "table": "notificationLogs"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "title",
+      "entityType": "columns",
+      "table": "notificationLogs"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "dedupeKey",
+      "entityType": "columns",
+      "table": "notificationLogs"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "providerTaskId",
+      "entityType": "columns",
+      "table": "notificationLogs"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "error",
+      "entityType": "columns",
+      "table": "notificationLogs"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "(unixepoch() * 1000)",
+      "generated": null,
+      "name": "createdAt",
+      "entityType": "columns",
+      "table": "notificationLogs"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "sentAt",
+      "entityType": "columns",
+      "table": "notificationLogs"
     },
     {
       "type": "text",
@@ -1265,6 +1567,15 @@
     },
     {
       "columns": [
+        "tokenHash"
+      ],
+      "nameExplicit": false,
+      "name": "appealTokens_pk",
+      "table": "appealTokens",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
         "id"
       ],
       "nameExplicit": false,
@@ -1310,6 +1621,15 @@
     },
     {
       "columns": [
+        "userId"
+      ],
+      "nameExplicit": false,
+      "name": "dingtalkContacts_pk",
+      "table": "dingtalkContacts",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
         "id"
       ],
       "nameExplicit": false,
@@ -1324,6 +1644,15 @@
       "nameExplicit": false,
       "name": "grades_pk",
       "table": "grades",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "notificationLogs_pk",
+      "table": "notificationLogs",
       "entityType": "pks"
     },
     {
@@ -1471,6 +1800,34 @@
     {
       "columns": [
         {
+          "value": "recordId",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "appeal_tokens_record_idx",
+      "entityType": "indexes",
+      "table": "appealTokens"
+    },
+    {
+      "columns": [
+        {
+          "value": "expiresAt",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "appeal_tokens_expires_idx",
+      "entityType": "indexes",
+      "table": "appealTokens"
+    },
+    {
+      "columns": [
+        {
           "value": "status",
           "isExpression": false
         }
@@ -1603,7 +1960,7 @@
     {
       "columns": [
         {
-          "value": "teacherUserId",
+          "value": "teacherDingtalkId",
           "isExpression": false
         }
       ],
@@ -1653,6 +2010,20 @@
     {
       "columns": [
         {
+          "value": "name",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "dingtalk_contacts_name_idx",
+      "entityType": "indexes",
+      "table": "dingtalkContacts"
+    },
+    {
+      "columns": [
+        {
           "value": "campusId",
           "isExpression": false
         }
@@ -1695,6 +2066,62 @@
       "name": "grades_campus_idx",
       "entityType": "indexes",
       "table": "grades"
+    },
+    {
+      "columns": [
+        {
+          "value": "dedupeKey",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "notification_logs_dedupe_uidx",
+      "entityType": "indexes",
+      "table": "notificationLogs"
+    },
+    {
+      "columns": [
+        {
+          "value": "campusId",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "notification_logs_campus_idx",
+      "entityType": "indexes",
+      "table": "notificationLogs"
+    },
+    {
+      "columns": [
+        {
+          "value": "status",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "notification_logs_status_idx",
+      "entityType": "indexes",
+      "table": "notificationLogs"
+    },
+    {
+      "columns": [
+        {
+          "value": "recordId",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "notification_logs_record_idx",
+      "entityType": "indexes",
+      "table": "notificationLogs"
     },
     {
       "columns": [
@@ -1835,6 +2262,18 @@
       "name": "appeals_status_check",
       "entityType": "checks",
       "table": "appeals"
+    },
+    {
+      "value": "kind IN ('record_deduction', 'record_positive', 'weekly_report')",
+      "name": "notification_logs_kind_check",
+      "entityType": "checks",
+      "table": "notificationLogs"
+    },
+    {
+      "value": "status IN ('pending', 'sent', 'failed', 'skipped')",
+      "name": "notification_logs_status_check",
+      "entityType": "checks",
+      "table": "notificationLogs"
     },
     {
       "value": "action IN ('create', 'revoke', 'appeal', 'adjust', 'appeal_reject')",
