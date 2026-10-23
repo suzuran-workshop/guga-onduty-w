@@ -150,7 +150,13 @@ export interface RecordWithDetails extends DutyRecord {
 export interface Appeal {
   id: string;
   recordId: string;
-  teacherId: string;
+  /**
+   * 申诉教师的**系统 userId**（可空，2026-10-23）。
+   * 免登录申诉（钉钉令牌链接）的教师可能没有系统账号——「不需要进系统」正是需求 4 的前提。
+   */
+  teacherId: string | null;
+  /** 申诉教师的**钉钉 userid**（必填）：免登录申诉的权威身份来源 */
+  teacherDingtalkId: string;
   reason: string;
   status: AppealStatus;
   reviewerId: string | null;
@@ -182,10 +188,13 @@ export interface RecordLog {
   id: string;
   recordId: string;
   action: RecordAction;
-  operatorId: string;
+  /** 操作人系统 userId（可空：免登录申诉的教师可能没有系统账号） */
+  operatorId: string | null;
+  /** 操作人钉钉 userid（可空）：免登录申诉时留痕「谁做的」 */
+  operatorDingtalkId?: string | null;
   reason: string | null;
   createdAt: number;
-  /** 操作人姓名（join userProfiles；用户已删则为「已删除用户」）—— 仅读取日志时填充 */
+  /** 操作人姓名（join userProfiles / 通讯录；用户已删则为「已删除用户」）—— 仅读取日志时填充 */
   operatorName?: string;
 }
 

@@ -190,7 +190,13 @@ export const recordLogs = sqliteTable(
     id: sqliteCol.id(),
     recordId: ref('recordId'),
     action: sqliteCol.text('action').notNull(),
-    operatorId: ref('operatorId'),
+    /**
+     * 操作人系统 userId（可空，2026-10-23 改为可空）。
+     * 免登录申诉（钉钉令牌链接）的教师可能没有系统账号 → 此时为 null，身份看 operatorDingtalkId。
+     */
+    operatorId: optRef('operatorId'),
+    /** 操作人钉钉 userid（可空）：免登录申诉时留痕「谁做的」 */
+    operatorDingtalkId: sqliteCol.text('operatorDingtalkId'),
     reason: sqliteCol.text('reason'),
     createdAt: sqliteCol.createdAt('createdAt'),
   },
@@ -211,7 +217,18 @@ export const appeals = sqliteTable(
      */
     campusId: ref('campusId'),
     recordId: ref('recordId'),
-    teacherId: ref('teacherId'),
+    /**
+     * 申诉发起教师的**系统 userId**（可空，2026-10-23 改为可空）。
+     * 免登录申诉（钉钉令牌链接）的教师可能**根本没有系统账号**——「不需要进系统」正是需求 4 的前提，
+     * 故不能 NOT NULL。有账号则填（系统内申诉路径），无账号为 null，靠 teacherDingtalkId 认人。
+     */
+    teacherId: optRef('teacherId'),
+    /**
+     * 申诉发起教师的**钉钉 userid**（必填，2026-10-23 新增）。
+     * 免登录申诉的权威身份来源：令牌绑定它，提交时回填。展示名走
+     * COALESCE(userProfiles.displayName, dingtalkContacts.name)。
+     */
+    teacherDingtalkId: sqliteCol.text('teacherDingtalkId').notNull(),
     reason: sqliteCol.text('reason').notNull(),
     status: sqliteCol.text('status').notNull().default('pending'),
     reviewerId: optRef('reviewerId'),

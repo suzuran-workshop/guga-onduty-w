@@ -65,7 +65,7 @@ function toDetails(r: any): RecordWithDetails {
 export function createRecordsRepo(ctx: DrizzleCtx): RecordsRepo {
   const { tables: T } = ctx;
   const db = ctx.db as any;
-  const { records, recordLogs, classes, grades, tags, userProfiles } = T;
+  const { records, recordLogs, classes, grades, tags, userProfiles, dingtalkContacts } = T;
 
   /** join 投影（list/detail/export 复用）—— 别名 camelCase，与 RecordWithDetails 对齐（tags 除外） */
   const projection = {
@@ -281,26 +281,42 @@ export function createRecordsRepo(ctx: DrizzleCtx): RecordsRepo {
     },
 
     async listLogs(recordId): Promise<RecordLog[]> {
-      // 按时间升序（先 create 后 adjust）；leftJoin userProfiles 取操作人名（用户可能已删，COALESCE 兜底）
+      // 按时间升序（先 create 后 adjust）。
+      //
+      // 操作人名三级兜底（2026-10-23：operatorId 改为可空后，旧的
+      // `COALESCE(userProfiles.displayName, '已删除用户')` 会误报——免登录申诉的教师
+      // 从来没有系统账号，operatorId 为 null 使 join 落空，却被说成「已删除用户」。
+      // 那人没被删，只是不进系统。故按 operatorId 是否为空区分文案：
+      //   1. 有系统账号 → userProfiles.displayName
+      //   2. 免登录（无账号）→ 通讯录 dingtalkContacts.name（按 operatorDingtalkId 查）
+      //   3. operatorId 非空却查不到 → 账号确已删除 → '已删除用户'
+      //   4. 两个身份都查不到 → '未知操作人'
+      // 用相关子查询而非 leftJoin：两张兜底表各自可选命中，join 会让行数语义变复杂。
+      const operatorName = sql<string>`COALESCE(
+        (SELECT ${userProfiles.displayName} FROM ${userProfiles} WHERE ${userProfiles.userId} = ${recordLogs.operatorId}),
+        (SELECT ${dingtalkContacts.name} FROM ${dingtalkContacts} WHERE ${dingtalkContacts.userId} = ${recordLogs.operatorDingtalkId}),
+        CASE WHEN ${recordLogs.operatorId} IS NOT NULL THEN '已删除用户' ELSE '未知操作人' END
+      )`;
       const rows = await db
         .select({
           id: recordLogs.id,
           recordId: recordLogs.recordId,
           action: recordLogs.action,
           operatorId: recordLogs.operatorId,
+          operatorDingtalkId: recordLogs.operatorDingtalkId,
           reason: recordLogs.reason,
           createdAt: recordLogs.createdAt,
-          operatorName: sql<string>`COALESCE(${userProfiles.displayName}, '已删除用户')`,
+          operatorName,
         })
         .from(recordLogs)
-        .leftJoin(userProfiles, eq(recordLogs.operatorId, userProfiles.userId))
         .where(eq(recordLogs.recordId, recordId))
         .orderBy(asc(recordLogs.createdAt));
       return rows.map((r: any) => ({
         id: r.id,
         recordId: r.recordId,
         action: r.action as RecordAction,
-        operatorId: r.operatorId,
+        operatorId: r.operatorId ?? null,
+        operatorDingtalkId: r.operatorDingtalkId ?? null,
         reason: r.reason ?? null,
         createdAt: num(r.createdAt),
         operatorName: r.operatorName,

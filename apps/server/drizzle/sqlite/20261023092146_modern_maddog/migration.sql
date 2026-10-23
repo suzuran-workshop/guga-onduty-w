@@ -39,8 +39,46 @@ CREATE TABLE `notificationLogs` (
 );
 --> statement-breakpoint
 ALTER TABLE `appeals` ADD `campusId` text NOT NULL;--> statement-breakpoint
+ALTER TABLE `appeals` ADD `teacherDingtalkId` text NOT NULL;--> statement-breakpoint
 ALTER TABLE `classes` ADD `teacherDingtalkId` text;--> statement-breakpoint
+ALTER TABLE `recordLogs` ADD `operatorDingtalkId` text;--> statement-breakpoint
 ALTER TABLE `records` ADD `tagIds` text;--> statement-breakpoint
+PRAGMA foreign_keys=OFF;--> statement-breakpoint
+CREATE TABLE `__new_appeals` (
+	`id` text PRIMARY KEY,
+	`campusId` text NOT NULL,
+	`recordId` text NOT NULL,
+	`teacherId` text,
+	`teacherDingtalkId` text NOT NULL,
+	`reason` text NOT NULL,
+	`status` text DEFAULT 'pending' NOT NULL,
+	`reviewerId` text,
+	`reviewComment` text,
+	`createdAt` integer DEFAULT (unixepoch() * 1000) NOT NULL,
+	`reviewedAt` integer,
+	CONSTRAINT "appeals_status_check" CHECK(status IN ('pending', 'approved', 'rejected'))
+);
+--> statement-breakpoint
+INSERT INTO `__new_appeals`(`id`, `recordId`, `teacherId`, `reason`, `status`, `reviewerId`, `reviewComment`, `createdAt`, `reviewedAt`) SELECT `id`, `recordId`, `teacherId`, `reason`, `status`, `reviewerId`, `reviewComment`, `createdAt`, `reviewedAt` FROM `appeals`;--> statement-breakpoint
+DROP TABLE `appeals`;--> statement-breakpoint
+ALTER TABLE `__new_appeals` RENAME TO `appeals`;--> statement-breakpoint
+PRAGMA foreign_keys=ON;--> statement-breakpoint
+PRAGMA foreign_keys=OFF;--> statement-breakpoint
+CREATE TABLE `__new_recordLogs` (
+	`id` text PRIMARY KEY,
+	`recordId` text NOT NULL,
+	`action` text NOT NULL,
+	`operatorId` text,
+	`operatorDingtalkId` text,
+	`reason` text,
+	`createdAt` integer DEFAULT (unixepoch() * 1000) NOT NULL,
+	CONSTRAINT "record_logs_action_check" CHECK(action IN ('create', 'revoke', 'appeal', 'adjust', 'appeal_reject'))
+);
+--> statement-breakpoint
+INSERT INTO `__new_recordLogs`(`id`, `recordId`, `action`, `operatorId`, `reason`, `createdAt`) SELECT `id`, `recordId`, `action`, `operatorId`, `reason`, `createdAt` FROM `recordLogs`;--> statement-breakpoint
+DROP TABLE `recordLogs`;--> statement-breakpoint
+ALTER TABLE `__new_recordLogs` RENAME TO `recordLogs`;--> statement-breakpoint
+PRAGMA foreign_keys=ON;--> statement-breakpoint
 PRAGMA foreign_keys=OFF;--> statement-breakpoint
 CREATE TABLE `__new_records` (
 	`id` text PRIMARY KEY,
@@ -61,28 +99,15 @@ INSERT INTO `__new_records`(`id`, `campusId`, `classId`, `recorderId`, `score`, 
 DROP TABLE `records`;--> statement-breakpoint
 ALTER TABLE `__new_records` RENAME TO `records`;--> statement-breakpoint
 PRAGMA foreign_keys=ON;--> statement-breakpoint
-PRAGMA foreign_keys=OFF;--> statement-breakpoint
-CREATE TABLE `__new_recordLogs` (
-	`id` text PRIMARY KEY,
-	`recordId` text NOT NULL,
-	`action` text NOT NULL,
-	`operatorId` text NOT NULL,
-	`reason` text,
-	`createdAt` integer DEFAULT (unixepoch() * 1000) NOT NULL,
-	CONSTRAINT "record_logs_action_check" CHECK(action IN ('create', 'revoke', 'appeal', 'adjust', 'appeal_reject'))
-);
---> statement-breakpoint
-INSERT INTO `__new_recordLogs`(`id`, `recordId`, `action`, `operatorId`, `reason`, `createdAt`) SELECT `id`, `recordId`, `action`, `operatorId`, `reason`, `createdAt` FROM `recordLogs`;--> statement-breakpoint
-DROP TABLE `recordLogs`;--> statement-breakpoint
-ALTER TABLE `__new_recordLogs` RENAME TO `recordLogs`;--> statement-breakpoint
-PRAGMA foreign_keys=ON;--> statement-breakpoint
+CREATE INDEX `appeals_status_idx` ON `appeals` (`status`);--> statement-breakpoint
+CREATE INDEX `appeals_record_idx` ON `appeals` (`recordId`);--> statement-breakpoint
+CREATE INDEX `appeals_campus_idx` ON `appeals` (`campusId`);--> statement-breakpoint
+CREATE INDEX `record_logs_record_idx` ON `recordLogs` (`recordId`);--> statement-breakpoint
 CREATE INDEX `records_campus_week_idx` ON `records` (`campusId`,`week`);--> statement-breakpoint
 CREATE INDEX `records_class_idx` ON `records` (`classId`);--> statement-breakpoint
 CREATE INDEX `records_status_idx` ON `records` (`status`);--> statement-breakpoint
-CREATE INDEX `record_logs_record_idx` ON `recordLogs` (`recordId`);--> statement-breakpoint
 CREATE INDEX `appeal_tokens_record_idx` ON `appealTokens` (`recordId`);--> statement-breakpoint
 CREATE INDEX `appeal_tokens_expires_idx` ON `appealTokens` (`expiresAt`);--> statement-breakpoint
-CREATE INDEX `appeals_campus_idx` ON `appeals` (`campusId`);--> statement-breakpoint
 CREATE INDEX `classes_teacher_idx` ON `classes` (`teacherDingtalkId`);--> statement-breakpoint
 CREATE INDEX `dingtalk_contacts_name_idx` ON `dingtalkContacts` (`name`);--> statement-breakpoint
 CREATE UNIQUE INDEX `notification_logs_dedupe_uidx` ON `notificationLogs` (`dedupeKey`);--> statement-breakpoint
