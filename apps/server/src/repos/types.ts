@@ -152,12 +152,26 @@ export interface RecordsRepo {
 
 // ── 申诉 ────────────────────────────────────────────────────────────
 export interface AppealsRepo {
+  /**
+   * teacherId / teacherDingtalkId 是 **OR** 语义（不是 AND）：教师能看到
+   * 「系统内提交的申诉」（teacherId 命中）**或**「免登录链接提交的申诉」（teacherDingtalkId 命中）。
+   * 只按 teacherId 过滤会让教师登进系统后看不到自己刚用钉钉链接提交的申诉（那条 teacherId 为 null）。
+   */
   list(filter: {
-    campusId?: string; teacherId?: string; status?: string; page: number; pageSize: number;
+    campusId?: string; teacherId?: string; teacherDingtalkId?: string;
+    status?: string; page: number; pageSize: number;
   }): Promise<Paged<AppealWithDetails>>;
   findById(id: string): Promise<AppealWithDetails | null>;
-  /** 事务：update record.status→appealing + insert appeal + log（修复现有非原子 bug） */
-  create(input: { recordId: string; teacherId: string; reason: string; campusId: string }): Promise<Appeal>;
+  /**
+   * 事务：update record.status→appealing + insert appeal + log（修复现有非原子 bug）。
+   * teacherDingtalkId 必填（申诉人身份权威来源）；teacherId 可选（免登录申诉的教师可能无系统账号）。
+   * **严格语义**：仅当记录当前为 active 才创建；否则返回 null 且不写任何行——
+   * 双击提交等并发下只有抢到状态转换的请求落申诉（结构化兜底，路由校验之外的最后一道闸）。
+   */
+  create(input: {
+    recordId: string; campusId: string; teacherDingtalkId: string;
+    teacherId?: string | null; reason: string;
+  }): Promise<Appeal | null>;
   /**
    * 事务：update appeal(approved) + **调整 record 分数**（tagIds→新集、score 重算、status→active）+ log 'adjust'。
    * 需求：申诉通过是「修改而非撤销」——管理员给出调整后的标签集，记录回 active 照常计分。

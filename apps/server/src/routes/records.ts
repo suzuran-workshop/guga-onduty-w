@@ -214,7 +214,17 @@ export function createRecordRoutes(deps: RouteDeps): Hono {
       throw ApiError.forbidden('只能对本班记录发起申诉');
     }
     if (record.status !== 'active') throw ApiError.badRequest('仅 active 记录可申诉');
-    await repos.appeals.create({ recordId, teacherId: profile.userId, reason: body.reason, campusId: profile.campusId });
+    // teacherDingtalkId 是「谁申诉的」权威来源（免登录路径同样回填它）；
+    // teacherId 顺带留系统账号，有则便于关联，无则 null（见 appeals.teacherId 注释）。
+    // create 严格语义：记录非 active（含并发抢转换失败）→ null。
+    const appeal = await repos.appeals.create({
+      recordId,
+      teacherId: profile.userId,
+      teacherDingtalkId,
+      reason: body.reason,
+      campusId: profile.campusId,
+    });
+    if (!appeal) throw ApiError.conflict('该记录当前状态不可申诉（可能已撤回或申诉处理中）', 'RECORD_NOT_APPEALABLE');
     return created(c, { appealed: true });
   });
 

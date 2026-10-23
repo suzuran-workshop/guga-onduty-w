@@ -39,9 +39,13 @@ CREATE TABLE "notificationLogs" (
 );
 --> statement-breakpoint
 ALTER TABLE "appeals" ADD COLUMN "campusId" uuid NOT NULL;--> statement-breakpoint
+ALTER TABLE "appeals" ADD COLUMN "teacherDingtalkId" text NOT NULL;--> statement-breakpoint
 ALTER TABLE "classes" ADD COLUMN "teacherDingtalkId" text;--> statement-breakpoint
+ALTER TABLE "recordLogs" ADD COLUMN "operatorDingtalkId" text;--> statement-breakpoint
 ALTER TABLE "records" ADD COLUMN "tagIds" jsonb;--> statement-breakpoint
 ALTER TABLE "records" DROP COLUMN "tagId";--> statement-breakpoint
+ALTER TABLE "appeals" ALTER COLUMN "teacherId" DROP NOT NULL;--> statement-breakpoint
+ALTER TABLE "recordLogs" ALTER COLUMN "operatorId" DROP NOT NULL;--> statement-breakpoint
 ALTER TABLE "records" ALTER COLUMN "score" SET DEFAULT 0;--> statement-breakpoint
 ALTER TABLE "records" ALTER COLUMN "score" SET NOT NULL;--> statement-breakpoint
 CREATE INDEX "appeal_tokens_record_idx" ON "appealTokens" ("recordId");--> statement-breakpoint

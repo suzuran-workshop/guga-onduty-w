@@ -13,12 +13,13 @@
  *  - approve：事务 update appeal(approved,仅 pending)+ record(调分回 active,仅 appealing)+ log 'adjust'。
  *  - reject：事务 update appeal(rejected)+ record(回滚 active)+ log。
  *  - list：一次 join 取 record_info（修复旧代码逐行再查的 N+1）。
- *  - teacher 只看自己的（teacherId 过滤）；campusId 过滤补齐。
+ *  - teacher 只看自己的：按 teacherId **或** teacherDingtalkId 过滤（OR，覆盖免登录申诉）；campusId 过滤补齐。
  */
-import { eq, and, desc, sql, inArray } from 'drizzle-orm';
+import { eq, and, or, desc, sql, inArray } from 'drizzle-orm';
 import type { Appeal, AppealWithDetails, AppealRecordInfo, Tag, TagCategory } from '@guga-onduty-w/shared';
 import type { AppealsRepo, Paged } from '../types.js';
-import { DrizzleCtx, whereAll, eqIf, paginate, num } from './_base.js';
+import { DrizzleCtx, whereAll, eqIf, paginate, num, countAll } from './_base.js';
+import type { SQL } from 'drizzle-orm';
 
 function toTag(r: any): Tag {
   return {
@@ -38,10 +39,15 @@ function toJsonArray(v: unknown): string[] | null {
 export function createAppealsRepo(ctx: DrizzleCtx): AppealsRepo {
   const { tables: T } = ctx;
   const db = ctx.db as any;
-  const { appeals, records, recordLogs, classes, tags, userProfiles } = T;
+  const { appeals, records, recordLogs, classes, tags, userProfiles, dingtalkContacts } = T;
 
-  // teacher/reviewer 都来自 userProfiles.displayName（旧 users.display_name）
-  const teacherName = sql<string>`(SELECT ${userProfiles.displayName} FROM ${userProfiles} WHERE ${userProfiles.userId} = ${appeals.teacherId})`;
+  // 申诉人姓名：三级兜底。系统内申诉 → userProfiles.displayName；
+  // 免登录申诉（教师可能无系统账号）→ 通讯录 name（按 teacherDingtalkId 查）；都无 → 空串。
+  const teacherName = sql<string>`COALESCE(
+    (SELECT ${userProfiles.displayName} FROM ${userProfiles} WHERE ${userProfiles.userId} = ${appeals.teacherId}),
+    (SELECT ${dingtalkContacts.name} FROM ${dingtalkContacts} WHERE ${dingtalkContacts.userId} = ${appeals.teacherDingtalkId}),
+    ''
+  )`;
   const reviewerName = sql<string | null>`(SELECT ${userProfiles.displayName} FROM ${userProfiles} WHERE ${userProfiles.userId} = ${appeals.reviewerId})`;
 
   /** appeal + record_info 的完整投影（list/detail 复用）。tags 由 attachTags 批量补 */
@@ -49,6 +55,7 @@ export function createAppealsRepo(ctx: DrizzleCtx): AppealsRepo {
     id: appeals.id,
     recordId: appeals.recordId,
     teacherId: appeals.teacherId,
+    teacherDingtalkId: appeals.teacherDingtalkId,
     reason: appeals.reason,
     status: appeals.status,
     reviewerId: appeals.reviewerId,
@@ -96,7 +103,8 @@ export function createAppealsRepo(ctx: DrizzleCtx): AppealsRepo {
     const appeal: AppealWithDetails = {
       id: r.id,
       recordId: r.recordId,
-      teacherId: r.teacherId,
+      teacherId: r.teacherId ?? null,
+      teacherDingtalkId: r.teacherDingtalkId,
       reason: r.reason,
       status: r.status,
       reviewerId: r.reviewerId ?? null,
@@ -136,25 +144,25 @@ export function createAppealsRepo(ctx: DrizzleCtx): AppealsRepo {
 
   return {
     async list(filter): Promise<Paged<AppealWithDetails>> {
-      const { campusId, teacherId, status, page, pageSize } = filter;
-      // campusId 过滤走 appeals.campusId（2026-10-23 起该列已落库，无需 join records 推导）
-      const cond = whereAll([
-        eqIf(appeals.campusId, campusId),
-        eqIf(appeals.teacherId, teacherId),
-        eqIf(appeals.status, status),
-      ]);
+      const { campusId, teacherId, teacherDingtalkId, status, page, pageSize } = filter;
+      // 教师归属过滤：两个身份维度 **OR**（见 AppealsRepo.list 契约注释）。
+      // 免登录申诉只有 teacherDingtalkId，系统内申诉两者都有——只按 teacherId 过滤会漏掉前者。
+      const mineConds = [eqIf(appeals.teacherId, teacherId), eqIf(appeals.teacherDingtalkId, teacherDingtalkId)]
+        .filter((x): x is SQL => Boolean(x));
+      const mine = mineConds.length === 0 ? undefined : mineConds.length === 1 ? mineConds[0]! : or(...mineConds);
+
+      // campusId 过滤走 appeals.campusId（2026-10-23 起该列已落库，无需 join records 推导）。
+      // 条件只构建一次，count 与数据查询共用——此前两处各自拼一份，改一处漏一处就会让
+      // 分页 total 与实际行数不一致（翻页出现空白页或漏项）。
+      const cond = whereAll([eqIf(appeals.campusId, campusId), mine, eqIf(appeals.status, status)]);
 
       const [{ total }] = await db
-        .select({ total: sql<number>`COUNT(*)` })
+        .select({ total: countAll })
         .from(appeals)
-        .where(whereAll([
-          eqIf(appeals.campusId, campusId),
-          eqIf(appeals.teacherId, teacherId),
-          eqIf(appeals.status, status),
-        ])!);
+        .where(cond);
 
       const rows = await joined()
-        .where(cond!)
+        .where(cond)
         .orderBy(desc(appeals.createdAt))
         .limit(pageSize)
         .offset((page - 1) * pageSize);
@@ -172,26 +180,42 @@ export function createAppealsRepo(ctx: DrizzleCtx): AppealsRepo {
       return withTags;
     },
 
-    async create(input): Promise<Appeal> {
+    /**
+     * 创建申诉并联动记录状态。**严格语义**：仅当记录当前为 active 才成功；
+     * active→appealing 转换影响 0 行（记录不存在 / 已撤回 / 已在申诉中）→ 返回 null 且**不插任何行**。
+     * 这是对路由层前置校验的结构化兜底：双击提交等并发场景下，只有抢到状态转换的那个请求
+     * 能落申诉，第二个拿到 null——否则宽松插入会产生同记录的重复 pending 申诉。
+     */
+    async create(input): Promise<Appeal | null> {
       const id = crypto.randomUUID();
-      await ctx.tx(async (tx: any) => {
-        // 仅 active 记录可申诉（复刻旧 WHERE status='active' 语义）
-        await tx.update(records).set({ status: 'appealing' })
+      const inserted = await ctx.tx(async (tx: any) => {
+        // 仅 active 记录可申诉；影响行数判定成败（并发下第二个请求在此拿 0）
+        const res = await tx.update(records).set({ status: 'appealing' })
           .where(and(eq(records.id, input.recordId), eq(records.status, 'active'))).run();
+        const changed = Number(res?.changes ?? res?.rowsAffected ?? 1);
+        if (changed === 0) return false;
         await tx.insert(appeals).values({
-          id, campusId: input.campusId, recordId: input.recordId, teacherId: input.teacherId,
+          id, campusId: input.campusId, recordId: input.recordId,
+          // teacherId 可空：免登录申诉的教师可能没有系统账号；teacherDingtalkId 才是身份权威
+          teacherId: input.teacherId ?? null,
+          teacherDingtalkId: input.teacherDingtalkId,
           reason: input.reason, status: 'pending', reviewerId: null,
           reviewComment: null, reviewedAt: null,
         }).run();
+        // 日志同时留两个身份：operatorId 可能为 null（无系统账号），operatorDingtalkId 保证可追溯
         await tx.insert(recordLogs).values({
           id: crypto.randomUUID(), recordId: input.recordId,
-          action: 'appeal', operatorId: input.teacherId, reason: input.reason,
+          action: 'appeal', operatorId: input.teacherId ?? null,
+          operatorDingtalkId: input.teacherDingtalkId, reason: input.reason,
         }).run();
+        return true;
       });
+      if (!inserted) return null;
       const rows = await db.select().from(appeals).where(eq(appeals.id, id)).limit(1);
       const r = rows[0];
       return {
-        id: r.id, recordId: r.recordId, teacherId: r.teacherId, reason: r.reason,
+        id: r.id, recordId: r.recordId, teacherId: r.teacherId ?? null,
+        teacherDingtalkId: r.teacherDingtalkId, reason: r.reason,
         status: r.status, reviewerId: r.reviewerId ?? null, reviewComment: r.reviewComment ?? null,
         createdAt: num(r.createdAt), reviewedAt: r.reviewedAt === null ? null : num(r.reviewedAt),
       };

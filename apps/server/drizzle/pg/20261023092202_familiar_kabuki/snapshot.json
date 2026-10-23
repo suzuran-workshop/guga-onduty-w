@@ -1,7 +1,7 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "e4197840-a1e3-40fc-bcaa-a34ba4e08a9e",
+  "id": "067ca01a-96ee-4751-87ca-bf9004224df0",
   "prevIds": [
     "51663123-fcfd-46e5-b7db-54d3fdfa1bbc"
   ],
@@ -668,12 +668,25 @@
     {
       "type": "uuid",
       "typeSchema": null,
-      "notNull": true,
+      "notNull": false,
       "dimensions": 0,
       "default": null,
       "generated": null,
       "identity": null,
       "name": "teacherId",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "appeals"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "teacherDingtalkId",
       "entityType": "columns",
       "schema": "public",
       "table": "appeals"
@@ -1526,12 +1539,25 @@
     {
       "type": "uuid",
       "typeSchema": null,
-      "notNull": true,
+      "notNull": false,
       "dimensions": 0,
       "default": null,
       "generated": null,
       "identity": null,
       "name": "operatorId",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "recordLogs"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "operatorDingtalkId",
       "entityType": "columns",
       "schema": "public",
       "table": "recordLogs"

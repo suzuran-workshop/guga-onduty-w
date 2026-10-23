@@ -1,7 +1,7 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "116903eb-bc52-4a7f-91a8-502d77993001",
+  "id": "dfe0c8de-197c-40fd-8292-eceb5de3bf15",
   "prevIds": [
     "16178e0f-4d93-4f14-b20c-50b1c2c7856b"
   ],
@@ -502,11 +502,21 @@
     },
     {
       "type": "text",
-      "notNull": true,
+      "notNull": false,
       "autoincrement": false,
       "default": null,
       "generated": null,
       "name": "teacherId",
+      "entityType": "columns",
+      "table": "appeals"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "teacherDingtalkId",
       "entityType": "columns",
       "table": "appeals"
     },
@@ -1162,11 +1172,21 @@
     },
     {
       "type": "text",
-      "notNull": true,
+      "notNull": false,
       "autoincrement": false,
       "default": null,
       "generated": null,
       "name": "operatorId",
+      "entityType": "columns",
+      "table": "recordLogs"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "operatorDingtalkId",
       "entityType": "columns",
       "table": "recordLogs"
     },

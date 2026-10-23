@@ -36,6 +36,8 @@ import { createAwardRoutes } from './awards.js';
 import { createSettingRoutes } from './settings.js';
 import { createSseRoutes } from './sse.js';
 import { createFileChunkRoutes } from './files.js';
+import { createDingtalkRoutes } from './dingtalk.js';
+import { createAppealTokenRoutes } from './appeal-token.js';
 
 /** 组装业务 API 路由（挂到 createApp 的 routes） */
 export function buildApiRoutes(deps: RouteDeps): Hono {
@@ -68,6 +70,14 @@ export function buildApiRoutes(deps: RouteDeps): Hono {
   api.route('/api/v1/sse', createSseRoutes(deps));
   // 分块上传（配合前端 chunk-client；历史为绕 qw-pages 网关上限，现保留见 routes/files.ts 说明）
   api.route('/api/v1/files', createFileChunkRoutes(deps));
+
+  // ── 钉钉管理面（需求 4；模块内部自带 requireRole('admin')）──
+  api.route('/api/v1/dingtalk', createDingtalkRoutes(deps));
+
+  // ⚠ 公开路由（免登录）：必须挂 /api/v1/* 之外——requireProfile/requireStudentScope 只守 /api/v1/*，
+  //   教师从钉钉推送点链接申诉时**没有任何会话**（可能根本没有系统账号）。挂 /api/public/*：
+  //   前缀 /api 让 Vite dev proxy 与生产同源静态服务都能命中，且明确属于 API 而非页面。
+  api.route('/api/public/appeal', createAppealTokenRoutes(deps));
 
   return api;
 }
