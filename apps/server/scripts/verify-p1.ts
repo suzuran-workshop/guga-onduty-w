@@ -84,7 +84,7 @@ async function main() {
   const now = Date.now();
   await (db as any).transaction(async (tx: any) => {
     await tx.insert(records).values({
-      id: recordId, campusId, classId, recorderId, tagId,
+      id: recordId, campusId, classId, recorderId, tagIds: [tagId],
       score: -2, comment: '地面有垃圾', images: ['records/files/a.jpg', 'records/files/b.jpg'],
       week: '2026-W41', status: 'active', recordedAt: now,
     }).run();
@@ -99,17 +99,17 @@ async function main() {
   ok('recordLogs.action（事务内写入）', { action: log.action });
 
   // ── 5. 复杂查询：join + SUM(CASE WHEN) 聚合 + groupBy + orderBy ──
-  // 复刻 statistics/ranking 口径：按班级聚合有效记录分数（active/appealing/appeal_approved 计分）
+  // 复刻 statistics/ranking 口径：按班级聚合有效记录分数（active/appealing 计分）
   console.log('\n[5] 复杂聚合查询（join + SUM CASE WHEN + groupBy）');
   // 再加一条正分记录，验证聚合
   await db.insert(records).values({
-    id: crypto.randomUUID(), campusId, classId, recorderId, tagId: null,
+    id: crypto.randomUUID(), campusId, classId, recorderId, tagIds: null,
     score: 3, week: '2026-W41', status: 'active', recordedAt: now,
   }).run();
   // ⚠ drizzle 坑：select 对象里的 sql 片段不自动生成 AS 别名，故 ORDER BY 不能引用
   //   字段 key（total），必须重复完整表达式。定义为可复用变量，select 与 orderBy 共用。
   // ⚠ 双方言一致坑：pg 严格要求 groupBy 含所有非聚合 select 列（sqlite 宽松），故补全 name 列。
-  const totalExpr = sql<number>`COALESCE(SUM(CASE WHEN ${records.status} IN ('active','appealing','appeal_approved') THEN ${records.score} ELSE 0 END), 0)`;
+  const totalExpr = sql<number>`COALESCE(SUM(CASE WHEN ${records.status} IN ('active','appealing') THEN ${records.score} ELSE 0 END), 0)`;
   const negCountExpr = sql<number>`COALESCE(SUM(CASE WHEN ${records.score} < 0 AND ${records.status} = 'active' THEN 1 ELSE 0 END), 0)`;
   const ranking = await db
     .select({

@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { api } from '@/api/client';
 import { useAsync } from '@/hooks/useAsync';
-import type { DashboardStats, ClassRanking, RecordWithDetails } from '@guga-onduty-w/shared';
+import type { DashboardStats, ClassRanking, RecordWithDetails, RecordStatus } from '@guga-onduty-w/shared';
 
 interface DashData {
   stats: DashboardStats;
@@ -19,11 +19,11 @@ interface DashData {
   recent: RecordWithDetails[];
 }
 
-const RECORD_STATUS_LABEL: Record<string, string> = {
+// 用 RecordStatus 而非 string 收窄键集：状态枚举变动时 TS 会直接报错，避免留下死键
+const RECORD_STATUS_LABEL: Record<RecordStatus, string> = {
   active: 'records.status.active',
   revoked: 'records.status.revoked',
   appealing: 'records.status.appealing',
-  appeal_approved: 'records.status.appeal_approved',
 };
 
 export default function DashboardPage() {
@@ -95,7 +95,7 @@ export default function DashboardPage() {
             {(data?.recent ?? []).map((r) => (
               <div key={r.id} className="flex items-center justify-between rounded-md border p-2 text-sm">
                 <div className="min-w-0">
-                  <div className="truncate font-medium">{r.className} · {r.tagName ?? t('records.comment')}</div>
+                  <div className="truncate font-medium">{r.className} · {r.tags.map((tg) => tg.name).join('、') || t('records.comment')}</div>
                   <div className="text-xs text-muted-foreground">{r.recorderName} · {r.week}</div>
                 </div>
                 <div className="flex items-center gap-2">

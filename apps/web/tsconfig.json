@@ -4,13 +4,17 @@
     "jsx": "react-jsx",
     "outDir": "./dist",
     "rootDir": "./src",
-    "types": ["vite/client"],
+    "types": [
+      "vite/client"
+    ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": [
+        "./src/*"
+      ]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"],
-  "references": [
-    { "path": "../../packages/shared" }
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx"
   ]
 }

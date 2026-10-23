@@ -76,8 +76,9 @@ export function createStatisticsRoutes(deps: RouteDeps): Hono {
           r.id,
           r.className,
           r.gradeName,
-          r.tagName ?? '',
-          r.score ?? '',
+          // 多标签：用顿号拼接标签名（csvField 已对逗号转义，顿号更利于中文阅读）
+          r.tags.map((t) => t.name).join('、'),
+          r.score,
           r.comment ?? '',
           r.week,
           new Date(r.recordedAt).toISOString(),

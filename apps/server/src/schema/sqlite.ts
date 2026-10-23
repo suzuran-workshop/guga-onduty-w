@@ -63,11 +63,19 @@ export const classes = sqliteTable(
     gradeId: ref('gradeId'),
     campusId: ref('campusId'),
     name: sqliteCol.text('name').notNull(),
+    /** 班主任展示名（自由文本，仅展示）。权威关联用 teacherUserId */
     classTeacher: sqliteCol.text('classTeacher'),
+    /**
+     * 班主任 userId（→ auth users.id / userProfiles.userId）。2026-10-23 新增（需求：
+     * 班主任只能申诉自己班 + 钉钉扣分推送给班主任）。classTeacher 文本无法可靠关联用户
+     * （无唯一约束、可重名、可空），故新增此权威列；文本列保留作展示名。
+     */
+    teacherUserId: optRef('teacherUserId'),
   },
   (t) => [
     uniqueIndex('classes_campus_grade_name_uidx').on(t.campusId, t.gradeId, t.name),
     index('classes_campus_idx').on(t.campusId),
+    index('classes_teacher_idx').on(t.teacherUserId),
   ],
 );
 
@@ -140,8 +148,17 @@ export const records = sqliteTable(
     campusId: ref('campusId'),
     classId: ref('classId'),
     recorderId: ref('recorderId'),
-    tagId: optRef('tagId'),
-    score: real('score'),
+    /**
+     * 评价标签 id 数组。2026-10-23 从单值 `tagId` 改为多值（需求：一次评价可选多个标签）。
+     * 照抄 templates.tagIds 的 JSON string[] 先例。
+     */
+    tagIds: sqliteJson<string[]>('tagIds'),
+    /**
+     * 分数 = 所选标签分之和，**由服务端按 tagIds 求和写入**，不信任前端传值
+     * （需求：「标签是提前设置好的，一旦选中以标签分为权威，不得由评分模块自行修改」）。
+     * 故 NOT NULL default 0（未选标签即 0 分）。
+     */
+    score: real('score').notNull().default(0),
     comment: sqliteCol.text('comment'),
     images: sqliteJson<string[]>('images'),
     week: sqliteCol.text('week').notNull(),
@@ -178,6 +195,11 @@ export const appeals = sqliteTable(
   'appeals',
   {
     id: sqliteCol.id(),
+    /**
+     * 校区 id。2026-10-23 新增：此前 appeals.create 的 campusId 入参是死参数（insert 不含它），
+     * 校区隔离只能靠 join records.campusId 推导。补列后隔离更直接、查询无需 join。
+     */
+    campusId: ref('campusId'),
     recordId: ref('recordId'),
     teacherId: ref('teacherId'),
     reason: sqliteCol.text('reason').notNull(),
@@ -191,6 +213,7 @@ export const appeals = sqliteTable(
     check('appeals_status_check', sql`status IN (${sql.raw(sqlInList(APPEAL_STATUSES))})`),
     index('appeals_status_idx').on(t.status),
     index('appeals_record_idx').on(t.recordId),
+    index('appeals_campus_idx').on(t.campusId),
   ],
 );
 

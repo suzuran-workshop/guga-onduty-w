@@ -169,27 +169,41 @@ async function main() {
   // ═══════════ records（事务 + join）═══════════
   console.log('[records]');
   const now = Date.now();
-  const rec1 = await R.records.create({ campusId: c1.id, classId: cls1.id, recorderId: student.id, tagId: tNeg.id, score: -2, comment: '地面垃圾', images: ['records/files/a.jpg'], week: '2026-W41', recordedAt: now });
-  ok('create（事务 + join + images）', { className: rec1.className, recorderName: rec1.recorderName, tagName: rec1.tagName });
+  // 2026-10-23：create 收 tagIds（数组），score 由 repo 按标签求和（标签分权威，不接受传值）
+  const rec1 = await R.records.create({ campusId: c1.id, classId: cls1.id, recorderId: student.id, tagIds: [tNeg.id], comment: '地面垃圾', images: ['records/files/a.jpg'], week: '2026-W41', recordedAt: now });
+  ok('create（事务 + join + images）', { className: rec1.className, recorderName: rec1.recorderName, tagNames: rec1.tags.map((t) => t.name) });
   assert(rec1.recorderName === '值周生A', 'recorderName 来自 userProfiles');
   assert(rec1.images?.length === 1, 'images JSON');
-  await R.records.create({ campusId: c1.id, classId: cls1.id, recorderId: student.id, tagId: tPos.id, score: 2, week: '2026-W41', recordedAt: now });
-  await R.records.create({ campusId: c1.id, classId: cls2.id, recorderId: student.id, tagId: tNeg.id, score: -1, week: '2026-W41', recordedAt: now });
+  assert(rec1.score === -2, `score 由标签求和（期望 -2，实际 ${rec1.score}）`);
+  // 按 id 断言（不用 name：上方 tags 段的部分更新测试已把它改名为「卫生差(改)」）
+  assert(rec1.tags.length === 1 && rec1.tags[0].id === tNeg.id, 'tags 展开为对象数组');
+  await R.records.create({ campusId: c1.id, classId: cls1.id, recorderId: student.id, tagIds: [tPos.id], week: '2026-W41', recordedAt: now });
+  await R.records.create({ campusId: c1.id, classId: cls2.id, recorderId: student.id, tagIds: [tNeg.id], week: '2026-W41', recordedAt: now });
+  // createMany：多班级一次落多条独立记录（用独立周次 W43，避免污染下方 statistics 段 W41 基线）
+  const many = await R.records.createMany({ campusId: c1.id, classIds: [cls1.id, cls2.id], recorderId: student.id, tagIds: [tPos.id], week: '2026-W43', recordedAt: now });
+  assert(many.length === 2 && many[0].id !== many[1].id, 'createMany 每班级一条独立记录');
+  assert(many[0].score === 2 && many[1].score === 2, 'createMany 各记录分数相同（同标签集）');
+  ok('createMany（多班级批量 + 独立 id）');
   const recPage = await R.records.list({ campusId: c1.id, page: 1, pageSize: 2 });
-  assert(recPage.pagination.total === 3 && recPage.data.length === 2, 'records 分页');
+  assert(recPage.pagination.total === 5 && recPage.data.length === 2, 'records 分页（3×W41 + 2×W43）');
   ok('list 分页');
   await R.records.revoke(rec1.id, admin.id, '误录');
   const revoked = await R.records.findByIdWithDetails(rec1.id);
   assert(revoked?.status === 'revoked', 'revoke 软删');
   ok('revoke（事务 + log）');
+  // adjust：申诉通过=调分而非撤销（改 tagIds + 回 active + log adjust）；用 W43 的 many[0] 验证
+  const adjRec = await R.records.adjust(many[0].id, { tagIds: [tNeu.id], operatorId: admin.id, reason: '申诉通过，改为一般' });
+  assert(adjRec.status === 'active' && adjRec.score === 0, `adjust 回 active 且分数重算（期望 0，实际 ${adjRec.score}）`);
+  ok('adjust（调分回 active，标签分权威）');
   const exportRows = await R.records.listForExport(c1.id, '2026-W40', '2026-W42');
-  assert(exportRows.length === 3, 'listForExport 周区间过滤');
+  assert(exportRows.length === 3, 'listForExport 周区间过滤（W40-W42 只含 3×W41）');
   ok('listForExport');
 
   // ═══════════ appeals（状态机事务）═══════════
   console.log('[appeals]');
-  // 用一条 active 记录申诉（rec1 已 revoked，改用 cls2 的那条）
-  const activeRec = (await R.records.list({ campusId: c1.id, status: 'active', page: 1, pageSize: 10 })).data[0];
+  // 确定性地用 cls2 的 active 记录申诉（rec1 已 revoked；cls1 的记录留给 statistics 段做分数基线，
+  // 故申诉只碰 cls2，避免 approve 调分污染 cls1）。list 支持 classId 过滤。
+  const activeRec = (await R.records.list({ campusId: c1.id, classId: cls2.id, status: 'active', page: 1, pageSize: 10 })).data[0];
   const appeal = await R.appeals.create({ recordId: activeRec.id, teacherId: teacher.id, reason: '扣分不合理', campusId: c1.id });
   ok('create（事务：record→appealing + appeal + log）', { status: appeal.status });
   const appealedRec = await R.records.findByIdWithDetails(activeRec.id);
@@ -200,14 +214,15 @@ async function main() {
   // teacher 只看自己的
   const teacherAppeals = await R.appeals.list({ teacherId: teacher.id, page: 1, pageSize: 20 });
   assert(teacherAppeals.data.length === 1, 'teacher 过滤生效');
-  await R.appeals.approve(activeRec.id, admin.id, '情况属实');
+  await R.appeals.approve(activeRec.id, admin.id, { reviewComment: '情况属实', tagIds: [tNeu.id] });
   const approvedRec = await R.records.findByIdWithDetails(activeRec.id);
-  assert(approvedRec?.status === 'appeal_approved', 'approve 联动 record');
+  assert(approvedRec?.status === 'active', 'approve 后记录回 active（修改而非撤销）');
+  assert(approvedRec?.score === 0, `approve 调分后分数重算（期望 0，实际 ${approvedRec?.score}）`);
   const approvedAppeal = await R.appeals.findById(appeal.id);
   assert(approvedAppeal?.status === 'approved' && approvedAppeal.reviewerId === admin.id, 'appeal approved + reviewer');
-  ok('approve（事务联动）');
-  // reject 另一条
-  const activeRec2 = (await R.records.list({ campusId: c1.id, status: 'active', page: 1, pageSize: 10 })).data[0];
+  ok('approve（调分回 active，修改而非撤销）');
+  // reject 另一条（仍用 cls2；reject 不改分，只回滚状态）
+  const activeRec2 = (await R.records.list({ campusId: c1.id, classId: cls2.id, status: 'active', page: 1, pageSize: 10 })).data[0];
   if (activeRec2) {
     await R.appeals.create({ recordId: activeRec2.id, teacherId: teacher.id, reason: 'test', campusId: c1.id });
     await R.appeals.reject(activeRec2.id, admin.id, '证据不足');
@@ -230,12 +245,13 @@ async function main() {
   const ranking = await R.statistics.ranking(c1.id, '2026-W41');
   ok('ranking', ranking.map((r) => ({ cls: r.className, rank: r.rank, total: r.totalScore, cnt: r.recordCount })));
   // cls1(1班): -2(revoked 不计) + 2(active 计) = 2，cnt=1
-  // cls2(2班): -1(active→appealing→appeal_approved 计入) = -1，cnt=1
+  // cls2(2班): 原 -1 记录经申诉 approve 调分为 0（tNeu），active 计入 = 0，cnt=1
   const cls1Rank = ranking.find((r) => r.className === '1班')!;
   assert(cls1Rank.totalScore === 2, `1班应 2（revoked 的 -2 不计，剩 active +2），实际 ${cls1Rank.totalScore}`);
   assert(cls1Rank.recordCount === 1, `1班 recordCount 应 1（revoked 不计入 count），实际 ${cls1Rank.recordCount}`);
-  ok('计分口径（revoked 不计，appeal_approved 计入）');
-  const trend = await R.statistics.trend(cls1.id, ['2026-W40', '2026-W41', '2026-W42']);
+  ok('计分口径（revoked 不计；申诉调分后记录回 active 照常计分）');
+  // 修正原有 bug：trend 签名是 (campusId, classId, weeks)，此前漏传 campusId 导致运行时崩
+  const trend = await R.statistics.trend(c1.id, cls1.id, ['2026-W40', '2026-W41', '2026-W42']);
   assert(trend.length === 3 && trend[0].totalScore === 0, 'trend 补零');
   ok('trend（补零）');
   const dayStart = new Date(); dayStart.setHours(0, 0, 0, 0);
@@ -243,16 +259,26 @@ async function main() {
   const dash = await R.statistics.dashboard(c1.id, dayStart.getTime(), dayEnd.getTime(), '2026-W41');
   ok('dashboard（epoch 区间判今日）', dash);
 
-  // ═══════════ awards（幂等自动评选）═══════════
+  // ═══════════ awards（候选参考 + 人工颁发）═══════════
   console.log('[awards]');
-  const awarded = await R.awards.autoAward(c1.id, '2026-W41');
-  ok('autoAward（每年级第一名）', { n: awarded.length, notes: awarded.map((a) => a.note) });
-  // c1 有 2 个年级（g1: 1班/2班, g2: 3班），应颁 2 面旗
-  assert(awarded.length === 2, `应颁 2 面旗（2 年级），实际 ${awarded.length}`);
-  // 幂等：再颁一次不产生重复
-  const awarded2 = await R.awards.autoAward(c1.id, '2026-W41');
-  assert(awarded2.length === 2, `幂等：仍应 2 面，实际 ${awarded2.length}`);
-  ok('幂等（UNIQUE + onConflictDoNothing，重复调用不增）');
+  // 2026-10-23：autoAward 拆成 candidates（只读参考）+ grant（人工颁发）
+  const cands = await R.awards.candidates(c1.id, '2026-W41');
+  ok('candidates（每年级第一名参考，只读不落库）', { n: cands.length, names: cands.map((x) => x.className) });
+  assert(cands.length === 2, `应 2 个候选（2 年级），实际 ${cands.length}`);
+  assert(cands.every((x) => x.rank === 1 && !x.alreadyAwarded), '候选均 rank=1 且未颁');
+  const beforeGrant = await R.awards.listByCampus(c1.id, '2026-W41');
+  assert(beforeGrant.length === 0, 'candidates 不落库（颁发前应为空）');
+  // 人工颁发候选班级
+  const awarded = await R.awards.grant(c1.id, '2026-W41', cands.map((x) => x.classId));
+  ok('grant（人工颁发）', { n: awarded.length, notes: awarded.map((a) => a.note) });
+  assert(awarded.length === 2, `应颁 2 面旗，实际 ${awarded.length}`);
+  // 幂等：重复颁同一批不产生重复
+  const awarded2 = await R.awards.grant(c1.id, '2026-W41', cands.map((x) => x.classId));
+  assert(awarded2.length === 0, `幂等：重复颁发应新增 0，实际 ${awarded2.length}`);
+  // 颁发后 candidates 标记 alreadyAwarded
+  const candsAfter = await R.awards.candidates(c1.id, '2026-W41');
+  assert(candsAfter.every((x) => x.alreadyAwarded), '颁发后候选标记 alreadyAwarded');
+  ok('幂等（UNIQUE + onConflictDoNothing，重复颁发不增）');
   const awardList = await R.awards.listByCampus(c1.id, '2026-W41');
   assert(awardList.length === 2 && awardList[0].className, 'listByCampus join className/gradeName');
   await R.awards.remove(awardList[0].id);

@@ -4,7 +4,7 @@
  *      角色越权 403、非 admin 强制校区隔离（读+写+按 id）、admin 跨校区。
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { boot, seedStandard, type Harness } from './helpers/harness.js';
+import { boot, seedStandard, tinyPng, type Harness } from './helpers/harness.js';
 
 let h: Harness;
 let seed: Awaited<ReturnType<typeof seedStandard>>;
@@ -131,12 +131,13 @@ describe('多校区隔离（修复旧代码假隔离）', () => {
     // student2(c2) 建一条 c2 记录，student1(c1) 试图按 id 读
     const c2client = await h.loginAs('student2');
     const form = new FormData();
-    form.set('class_id', seed.clsC2.id);
-    form.set('score', '-1');
+    form.append('class_ids', seed.clsC2.id);
     form.set('week', '2026-W41');
+    form.append('tag_ids', seed.tagC2.id); // c2 的扣分标签
+    form.append('images', tinyPng());       // 扣分必拍照
     const created = await c2client.req('POST', '/api/v1/records', { body: form, isForm: true });
     expect(created.status).toBe(201);
-    const c2recId = created.json.data.id;
+    const c2recId = created.json.data[0].id;
 
     const c1client = await h.loginAs('student1');
     const r = await c1client.req('GET', `/api/v1/records/${c2recId}`);

@@ -222,7 +222,7 @@ export default function StatisticsPage() {
                     {detail.map((r) => (
                       <TableRow key={r.id}>
                         <TableCell>{r.gradeName} {r.className}</TableCell>
-                        <TableCell>{r.tagName || '--'}</TableCell>
+                        <TableCell>{r.tags.map((tg) => tg.name).join('、') || '--'}</TableCell>
                         <TableCell className={cn('font-semibold', (r.score ?? 0) >= 0 ? 'text-success' : 'text-destructive')}>
                           {r.score != null ? `${r.score >= 0 ? '+' : ''}${r.score}` : '--'}
                         </TableCell>

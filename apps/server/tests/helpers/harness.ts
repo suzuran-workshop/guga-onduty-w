@@ -202,18 +202,27 @@ export async function seedStandard(h: Harness) {
   const c2 = await R.campuses.create({ name: '第二校区', code: 'campus_02' });
   const g1 = await R.grades.create({ campusId: c1.id, name: '1年级', sortOrder: 1 });
   const g2 = await R.grades.create({ campusId: c2.id, name: '1年级', sortOrder: 1 });
-  const cls1 = await R.classes.create({ campusId: c1.id, gradeId: g1.id, name: '1班', classTeacher: '张老师' });
+  const cls1 = await R.classes.create({ campusId: c1.id, gradeId: g1.id, name: '1班', classTeacher: '李老师' });
   const cls2 = await R.classes.create({ campusId: c1.id, gradeId: g1.id, name: '2班' });
   const clsC2 = await R.classes.create({ campusId: c2.id, gradeId: g2.id, name: '1班' });
   const admin = await R.users.create({ campusId: c1.id, username: 'admin', password: '123456', displayName: '系统管理员', role: 'admin' });
   const teacher = await R.users.create({ campusId: c1.id, username: 'teacher1', password: '123456', displayName: '李老师', role: 'teacher' });
   const student = await R.users.create({ campusId: c1.id, username: 'student1', password: '123456', displayName: '值周生A', role: 'student' });
   const student2 = await R.users.create({ campusId: c2.id, username: 'student2', password: '123456', displayName: '值周生B', role: 'student' });
+  const teacherC2 = await R.users.create({ campusId: c2.id, username: 'teacher2', password: '123456', displayName: '赵老师', role: 'teacher' });
+  // 班级↔班主任权威绑定（2026-10-23 新增 teacherUserId）：
+  //  - cls1 绑 teacher（c1）→ teacher 可申诉 cls1 的记录
+  //  - cls2 故意**不绑** → 用于测「只能申诉自己班」的负向用例（未绑定班级一律 fail-closed 拒绝）
+  //  - clsC2 绑 teacherC2（c2）→ 用于跨校区申诉隔离测试
+  await R.classes.update(cls1.id, { name: '1班', classTeacher: '李老师', teacherUserId: teacher.id });
+  await R.classes.update(clsC2.id, { name: '1班', classTeacher: '赵老师', teacherUserId: teacherC2.id });
   const tagNeg = await R.tags.create({ campusId: c1.id, name: '迟到', score: -1, color: '#F44336', category: 'negative', isSystem: true });
   const tagPos = await R.tags.create({ campusId: c1.id, name: '卫生优秀', score: 2, color: '#4CAF50', category: 'positive', isSystem: true });
+  // 0 分中性标签：申诉「调分」测试用（把 -1 调成 0，验证分数重算且不撤销记录）
+  const tagNeu = await R.tags.create({ campusId: c1.id, name: '已整改', score: 0, color: '#9E9E9E', category: 'neutral', isSystem: false });
   const tagC2 = await R.tags.create({ campusId: c2.id, name: '迟到', score: -1, category: 'negative', isSystem: true });
   await R.settings.upsertMany(c1.id, [{ key: 'appeal_enabled', value: 'true' }]);
-  return { c1, c2, g1, g2, cls1, cls2, clsC2, admin, teacher, student, student2, tagNeg, tagPos, tagC2 };
+  return { c1, c2, g1, g2, cls1, cls2, clsC2, admin, teacher, teacherC2, student, student2, tagNeg, tagPos, tagNeu, tagC2 };
 }
 
 /** 构造一个 1x1 PNG（图片上传测试用） */

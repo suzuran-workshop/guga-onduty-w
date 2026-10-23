@@ -47,24 +47,31 @@ async function main() {
   await db.insert(classes).values({ id: classId, gradeId, campusId, name: '1班' }).run();
   await db.insert(classes).values({ id: classId2, gradeId, campusId, name: '2班' }).run();
   await db.insert(tags).values({ id: tagId, campusId, name: '卫生差', score: -2, category: 'negative', isSystem: 1 }).run();
+  // 2026-10-23：score 由 repo 按 tagIds 求和（标签分权威），故各分值需有对应标签
+  const tagPos = crypto.randomUUID();
+  const tagNeg1 = crypto.randomUUID();
+  await db.insert(tags).values({ id: tagPos, campusId, name: '卫生优秀', score: 3, category: 'positive', isSystem: 1 }).run();
+  await db.insert(tags).values({ id: tagNeg1, campusId, name: '迟到', score: -1, category: 'negative', isSystem: 1 }).run();
   await db.insert(userProfiles).values({ userId: recorderId, campusId, displayName: '值周生A', role: 'student' }).run();
 
   // ── create（事务 + images JSON）──
   console.log('[create]');
   const now = Date.now();
   const rec = await records.create({
-    campusId, classId, recorderId, tagId, score: -2, comment: '地面垃圾',
+    campusId, classId, recorderId, tagIds: [tagId], comment: '地面垃圾',
     images: ['records/files/a.jpg'], week: '2026-W41', recordedAt: now,
   });
-  ok('create 返回详情（join 生效）', { className: rec.className, recorderName: rec.recorderName, tagName: rec.tagName, score: rec.score, images: rec.images });
+  ok('create 返回详情（join 生效）', { className: rec.className, recorderName: rec.recorderName, tags: rec.tags.map((t) => t.name), score: rec.score, images: rec.images });
   if (rec.className !== '1班') throw new Error('className join 失败');
   if (rec.recorderName !== '值周生A') throw new Error('recorderName 应来自 userProfiles.displayName');
   if (!Array.isArray(rec.images) || rec.images.length !== 1) throw new Error('images JSON 未反序列化');
+  if (rec.score !== -2) throw new Error(`score 应由标签求和为 -2，实际 ${rec.score}`);
+  if (rec.tags.length !== 1 || rec.tags[0].name !== '卫生差') throw new Error('tags 应展开为对象数组');
 
-  // 1班 再加一条正分（无 tag）
-  await records.create({ campusId, classId, recorderId, tagId: null, score: 3, week: '2026-W41', recordedAt: now });
-  // 2班 一条负分
-  await records.create({ campusId, classId: classId2, recorderId, tagId, score: -1, week: '2026-W41', recordedAt: now });
+  // 1班 再加一条正分（+3 标签）
+  await records.create({ campusId, classId, recorderId, tagIds: [tagPos], week: '2026-W41', recordedAt: now });
+  // 2班 一条负分（-1 标签）
+  await records.create({ campusId, classId: classId2, recorderId, tagIds: [tagNeg1], week: '2026-W41', recordedAt: now });
 
   // ── list（分页 + 动态 where）──
   console.log('\n[list]');
@@ -107,7 +114,8 @@ async function main() {
 
   // ── statistics.trend（补零）──
   console.log('\n[statistics.trend]');
-  const trend = await stats.trend(classId, ['2026-W40', '2026-W41', '2026-W42']);
+  // 修正原有 bug：trend 签名是 (campusId, classId, weeks)，此前漏传 campusId 导致运行时崩
+  const trend = await stats.trend(campusId, classId, ['2026-W40', '2026-W41', '2026-W42']);
   ok('trend 补零', trend);
   if (trend.length !== 3) throw new Error('trend 应含 3 周');
   if (trend[0].totalScore !== 0) throw new Error('W40 无数据应为 0');
