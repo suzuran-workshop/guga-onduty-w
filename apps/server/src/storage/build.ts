@@ -5,17 +5,17 @@
  *  - 旧代码 writeFileSync 落盘 + 无读取端点（图片死数据）→ storage + /files/<key> 代理。
  *  - records.images 存 objectKey（不再存自造相对路径）。
  *
- * 后端选型（26.10.19 起 ./db 子路径已随包发布，此前 26.10.15 漏发）：
- *  - rest 轨（qw-pages）：createRestFileStore —— 二进制分块 base64 写入 homura_files / homura_file_chunks
- *    两张 PostgREST 表 → 持久化，不随冷启动/重发布丢失（local-fs 在只读应用根不可用）。
- *    表由部署期受控迁移预建（createRestFileStore 无 DDL 权限、不建表）。
- *  - drizzle 轨（standalone sqlite/pg）：createDrizzleFileStore —— 同一分块模型，运行时 CREATE TABLE
- *    IF NOT EXISTS 自建，使 dev 与线上共用同一条「分块上传 / 流式下载」代码路径。
- *  - 强制分块绕开两道平台限制：网关单请求 body ≥1MB→413、PostgREST 单值 ~1MB→500。
- *    前端配套 @homurajs/storage/chunk-client 逐块 raw PUT，见 routes/files.ts。
+ * 后端选型：createDrizzleFileStore —— 二进制分块 base64 写入 homura_files / homura_file_chunks
+ * 两张表，运行时 CREATE TABLE IF NOT EXISTS 自建（sqlite/pg 双方言）。
+ *
+ * 关于分块上传：强制分块原本是为绕开 qw-pages 网关 body ≥1MB→413 与 PostgREST 单值 ~1MB→500
+ * 两道限制。rest/qw-pages 轨已于 2026-10-23 移除（ADR-7），这两道限制在 standalone 下均不成立
+ * （app.ts bodyLimit 50MB）。但分块逻辑（routes/files.ts + 前端 chunk-client）在 drizzle 轨照常
+ * 工作、且已有完整实现，故本轮**保留**（最小改动、零回归）；是否退回纯 multipart + 恢复
+ * ADR-3「图片存文件系统」一致性，列为独立后续决策，不与本次变更混淆。
  */
 import type { ChunkedFileStorage } from '@homurajs/storage';
-import { createRestFileStore, createDrizzleFileStore } from '@homurajs/storage/db';
+import { createDrizzleFileStore } from '@homurajs/storage/db';
 import { createFileProxyRoutes } from '@homurajs/storage/proxy';
 import { Hono } from 'hono';
 import type { AppConfig } from '../config.js';
@@ -23,12 +23,8 @@ import type { DbHandle } from '../db/client.js';
 import { requireProfile } from '../middleware/profile.js';
 import type { UsersRepo } from '../repos/types.js';
 
-/** 构造 DB 分块存储后端（两轨统一 ChunkedFileStorage）。 */
+/** 构造 DB 分块存储后端（sqlite/pg 双方言，运行时自建表）。 */
 export function buildStorage(cfg: AppConfig, handle: DbHandle, logger?: { info: (m: string, f?: any) => void }): ChunkedFileStorage {
-  if (handle.kind === 'rest') {
-    logger?.info('storage: rest 轨使用 DB 分块后端（createRestFileStore，表须受控迁移预建）');
-    return createRestFileStore(handle.rest);
-  }
   logger?.info('storage: drizzle 轨使用 DB 分块后端（createDrizzleFileStore，运行时自建表）');
   return createDrizzleFileStore(handle.db as any);
 }

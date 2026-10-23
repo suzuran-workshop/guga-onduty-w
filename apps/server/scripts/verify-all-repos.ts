@@ -43,7 +43,6 @@ async function main() {
 
   const handle = await openDatabase(cfg);
   await migrate(handle);
-  if (handle.kind !== 'drizzle') throw new Error('期望 drizzle 形态');
   const auth = buildAuth(handle, cfg, { secure: false, loginPath: '/login' });
   const R = createRepos(handle, { passwordProvider: auth.passwordProvider, userStore: auth.userStore });
 

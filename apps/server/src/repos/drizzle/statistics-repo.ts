@@ -1,5 +1,5 @@
 /**
- * statistics repo（drizzle 实现）—— 聚合查询，三轨一致的口径。
+ * statistics repo（drizzle 实现）—— 聚合查询，双方言一致的口径。
  *
  * 迁移要点（对照旧 routes/statistics.ts）：
  *  - 有效计分口径修复为 active+appealing+appeal_approved（旧代码漏 appeal_approved，
@@ -7,7 +7,7 @@
  *  - ranking 的 total/positive/negative/count 用 SUM(CASE WHEN)；orderBy 重复表达式（不用别名）。
  *  - groupBy 补全所有非聚合列（pg 严格）。
  *  - dashboard 用 epoch 区间 [dayStart,dayEnd) 判「今日」（修复旧代码 UTC 日期边界 bug）。
- *  - trend 的周次列表由路由算好传入（repo 不碰日期逻辑，便于三轨一致）。
+ *  - trend 的周次列表由路由算好传入（repo 不碰日期逻辑，便于双方言一致）。
  */
 import { desc, eq, and, sql, gte, lt, inArray } from 'drizzle-orm';
 import type { ClassRanking, TrendPoint, DashboardStats } from '@guga-onduty-w/shared';

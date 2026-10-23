@@ -86,7 +86,7 @@ export default function RecordPage() {
     setSubmitting(true);
     try {
       // 图片走分块上传（chunk-client → /api/v1/files/{init,chunk,complete}）：
-      // 绕开 qw-pages 网关对单请求体 ~1MB 的入站硬上限（手机大图一次 multipart 必被 413）。
+      // 历史为绕开 qw-pages 网关单请求体 ~1MB 上限，该形态已移除（ADR-7）；分块逻辑保留、照常工作。
       // 每张图切成 ≤384KB 的块逐块 PUT，服务端 base64 分块落库（DB 后端，持久）。
       const credFetch: typeof fetch = (input, init) => fetch(input, { ...init, credentials: 'include' });
       const objectKeys: string[] = [];

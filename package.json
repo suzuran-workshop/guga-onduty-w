@@ -4,9 +4,9 @@
   "scripts": {
     "dev": "pnpm -r dev",
     "dev:server": "pnpm --filter @guga-onduty-w/server dev",
-    "dev:server:qw": "pnpm --filter @guga-onduty-w/server dev:qw",
     "dev:web": "pnpm --filter @guga-onduty-w/web dev",
     "build": "pnpm -r build",
+    "ensure-env": "pnpm --filter @guga-onduty-w/server ensure-env",
     "db:seed": "pnpm --filter @guga-onduty-w/server seed",
     "db:generate": "pnpm --filter @guga-onduty-w/server db:generate",
     "test": "pnpm -r test",

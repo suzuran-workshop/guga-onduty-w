@@ -2,10 +2,13 @@
  * PostgreSQL 轨 schema —— 业务表（pg 方言）。
  *
  * 设计约束（见 docs/MIGRATION-HOMURA.md §2）：
- *  - 列名一律 camelCase（homura pgCol/sqliteCol 缺省列名 = JS 属性名；rest 轨 restSchemaFromPg 派生同名）。
+ *  - 列名一律 camelCase（homura pgCol/sqliteCol 缺省列名 = JS 属性名）；与 sqlite.ts 列名
+ *    逐一对齐，由启动期 assertSchemaParity 门禁强制（表名/列名/主键漂移即抛错），
+ *    故同一份 drizzle repo 源码对双方言无感。
  *  - 迁移 SQL 由 `drizzle-kit generate` 生成本文件的元数据，**绝不手写 DDL**。
- *  - 主键统一 uuid（pgCol.id() = uuid defaultRandom）；引用列用裸 uuid（不用 references，
- *    遵循 @homurajs/auth 先例：rest 轨无 FK 概念，三轨语义一致靠应用层 repo+事务保证完整性）。
+ *  - 主键统一 uuid（pgCol.id() = uuid defaultRandom）；引用列用裸 uuid（不用 drizzle references()，
+ *    遵循 @homurajs/auth 先例：跨实体完整性靠应用层 repo + 事务保证，而非 DB 外键，
+ *    双方言语义一致且避免级联删除的隐式行为）。
  *  - check 约束的列名均为小写单词（role/status/category/action），SQL 字面量双方言通用。
  *  - auth 5 表由 `pgAuthTables` spread 进 pgSchema（见 ./index.ts），不在本文件重复定义。
  */

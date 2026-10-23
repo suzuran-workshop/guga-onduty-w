@@ -6,7 +6,7 @@
  *  - 业务 `userProfiles` 表管「你能做什么」（role / campusId / displayName / groupId）。
  *  - session.sub = users.id(uuid)；业务中间件 requireProfile 再查 userProfiles 补角色/校区。
  *
- * store 按数据方言选（drizzle 版 for sqlite/pg，rest 版 for qw-pages），接口语义严格对齐。
+ * store 用 drizzle 版（sqlite/pg 双方言共用），接口语义与 auth SDK 严格对齐。
  *
  * 登录走 SDK 的 `POST /auth/password/login`（scrypt 校验 + 下发 access/refresh cookie）。
  * 注册**不走** SDK 自助注册（allowRegister=false）——值周系统是 admin 建号带 role/campus，
@@ -19,9 +19,6 @@ import {
   createDrizzleSessionStore,
   createDrizzleUserStore,
   createDrizzlePasswordStore,
-  createRestSessionStore,
-  createRestUserStore,
-  createRestPasswordStore,
   type UserStore,
 } from '@homurajs/auth';
 import { createAuthRoutes, sessionMiddleware } from '@homurajs/auth/hono';
@@ -40,7 +37,7 @@ export interface AuthBundle {
 }
 
 export interface BuildAuthOptions {
-  /** cookie Secure：qw-pages/https 传 true，本地 http dev 传 false（由 adapter.trustProxy 接线） */
+  /** cookie Secure：https 部署传 true，本地 http dev 传 false（由 adapter.trustProxy 接线） */
   secure: boolean;
   /** 未登录页面请求 302 的目标（SDK 不渲染登录页，指向 SPA 登录路由） */
   loginPath: string;
@@ -49,19 +46,10 @@ export interface BuildAuthOptions {
 export function buildAuth(handle: DbHandle, cfg: AppConfig, opts: BuildAuthOptions): AuthBundle {
   const secret = cfg.get('sessionSecret');
 
-  // store 按方言选：drizzle(sqlite/pg) vs rest(qw-pages)
-  const sessionStore =
-    handle.kind === 'rest'
-      ? createRestSessionStore(handle.rest)
-      : createDrizzleSessionStore(handle.db as never);
-  const userStore =
-    handle.kind === 'rest'
-      ? createRestUserStore(handle.rest)
-      : createDrizzleUserStore(handle.db as never);
-  const passwordStore =
-    handle.kind === 'rest'
-      ? createRestPasswordStore(handle.rest)
-      : createDrizzlePasswordStore(handle.db as never);
+  // store：drizzle 双方言（sqlite/pg）共用
+  const sessionStore = createDrizzleSessionStore(handle.db as never);
+  const userStore = createDrizzleUserStore(handle.db as never);
+  const passwordStore = createDrizzlePasswordStore(handle.db as never);
 
   const sessions = new SessionManager({ secret }, sessionStore);
   const passwordProvider = new PasswordProvider({ userStore, passwordStore });

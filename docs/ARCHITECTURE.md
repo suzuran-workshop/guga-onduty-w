@@ -31,16 +31,16 @@
 │  └───────────────────────┬─────────────────────────────┘       │
 │                          ▼                                      │
 │  ┌──────────── repos 层（repository 模式）─────────────┐       │
-│  │ drizzle/（sqlite+pg 共用源码）  │  rest/（P4，qw-pages）│    │
+│  │ drizzle/（sqlite + pg 共用同一份源码，方言无感）      │       │
 │  └───────────────────────┬─────────────────────────────┘       │
 │                          ▼                                      │
-│  ┌──────── @homurajs/db · 三轨方言 ────────────────────┐       │
-│  │ sqlite(node:sqlite) │ pg(postgres-js) │ rest(PostgREST)│    │
+│  ┌──────── @homurajs/db · 双方言 ─────────────────────┐       │
+│  │ sqlite(node:sqlite)      │      pg(postgres-js)             │
 │  │ schema parity 门禁；迁移由 drizzle-kit 生成            │    │
 │  └───────────────────────┬─────────────────────────────┘       │
 │                          ▼                                      │
 │  18 表（值周13 + auth5）· apps/server/data/app.db              │
-│  @homurajs/storage local-fs · /files/<key> 代理（图片）        │
+│  @homurajs/storage DB 分块后端 · /files/<key> 代理（图片）     │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -49,7 +49,7 @@
 | 层 | 职责 | 约束 |
 |----|------|------|
 | **路由** routes/ | HTTP 契约、RBAC、多校区隔离、输入校验 | 不碰 SQL/drizzle；只调 repos |
-| **repo** repos/ | db 无关的领域接口；drizzle(sqlite/pg) + rest(qw-pages) 双实现 | 只取行/写行；事务边界在此 |
+| **repo** repos/ | db 无关的领域接口；drizzle(sqlite/pg) 单一实现（表对象按方言注入，源码方言无感） | 只取行/写行；事务边界在此 |
 | **schema** schema/ | pg/sqlite 双方言手写 + rest 派生 | parity 门禁；camelCase 列名；uuid PK；无 references |
 
 ## 身份模型（auth SDK + 业务档案分离）
@@ -93,36 +93,35 @@ auth SDK（@homurajs/auth）           业务档案（本项目）
        → 流动红旗 /awards（每年级第一名，幂等）/ 每日小结 /summaries
 ```
 
-## 三轨数据方言（部署弹性）
+## 双方言数据（sqlite / pg）
 
 | 方言 | 形态 | 数据路径 | repo 实现 |
 |------|------|---------|----------|
-| sqlite | standalone 单机（默认） | node:sqlite，`data/app.db` | drizzle/（完成） |
-| pg | standalone + 自建/自托管 supabase | postgres-js | drizzle/（同一份源码） |
-| rest | qw-pages 动态页 | PostgREST over HTTPS | rest/（P4，无 join/事务，JS 侧补偿） |
+| sqlite | standalone 单机（默认） | node:sqlite，`data/app.db` | drizzle/ |
+| pg | standalone + 自建/自托管 PostgreSQL | postgres-js | drizzle/（同一份源码） |
 
-- schema 三轨：pg.ts + sqlite.ts 手写、`restSchemaFromPg` 派生；`assertSchemaParity` 启动期硬门禁
+- schema 双方言：pg.ts + sqlite.ts 手写；`assertSchemaParity` 启动期硬门禁（表名/列名/主键一致）
 - 迁移：`pnpm db:generate`（drizzle-kit 双方言），**绝不手写 DDL**
-- 双入口：`index.ts`（createNodeAdapter）/ `qw-pages.ts`（createQwPagesAdapter），差异全走 adapter
+- 单入口：`index.ts`（createNodeAdapter，runtime 固定 standalone）
+- 历史第三轨 `rest`（PostgREST / qw-pages 托管形态）已于 2026-10-23 移除，见 DECISIONS.md ADR-7
 
 ## 存储与实时
 
-- **图片**：`@homurajs/storage` local-fs 后端 → `storage.uploadFile(ns, name, bytes, mime)` → objectKey；
-  读取走 `/files/<key>` 代理路由（命名空间校区限定 + 鉴权中间件）；MIME 白名单 + 大小/数量校验
+- **图片**：`@homurajs/storage` DB 分块后端（`createDrizzleFileStore`，运行时自建 homura_files/chunks 表）
+  → `storage.uploadFile(ns, name, bytes, mime)` → objectKey；读取走 `/files/<key>` 代理路由
+  （命名空间校区限定 + 鉴权中间件）；MIME 白名单 + 大小/数量校验。分块上传历史为绕 qw-pages 网关上限，
+  该形态移除后仍保留（照常工作，见 ADR-7）
 - **SSE**：类型化 EventBus（进程内 EventEmitter），事件 `record_created`/`record_revoked`；
   前端 EventSource 同源带 cookie；大屏/看板实时刷新 + 60s 兜底轮询
 
 ## 重要技术边界
 
 - **drizzle-orm@1.0.0-rc.4** 是 rc 版，API 可能变动；已锁版本 + spike 验证核心路径
-- **rest 轨**无法本地端到端验证（需 qw-pages 或自建 supabase）；用 `tests/helpers/mock-rest.ts`
-  忠实模拟 PostgREST 契约做契约测试；rest repo 为 P4 规划项
 - node:sqlite 同步 API，适合校内并发；多实例部署 SSE 需改 Redis Pub/Sub
-- **@homurajs 包 26.10.15**；storage 的 ./db、./tables 子路径在该版本发布缺失（发包 bug），
-  故 db 后端不可用，local-fs 后端不受影响
+- **@homurajs 包 26.10.19**；storage 的 ./db、./tables 子路径自该版本起已随包发布（此前 26.10.15 曾漏发）
 - 无 Docker/k8s 部署配置（原型阶段）
 
-## 测试策略（99 tests）
+## 测试策略（107 tests）
 
 | 套件 | 覆盖 |
 |------|------|
@@ -131,6 +130,7 @@ auth SDK（@homurajs/auth）           业务档案（本项目）
 | `crud-config` | 配置实体（校区/年级/班级/小组/标签/模板）CRUD |
 | `auth-rbac` | 登录 + RBAC + 多校区隔离 |
 | `wk-review` | 对抗性审查回归（同角色跨主体越权、复核已修缺陷） |
+| `ensure-env` | 冷启动配置自愈（幂等、真实 env 优先、secret 生成） |
 
 E2E 台架 `tests/helpers/harness.ts`：起真实 HTTP 服务（ephemeral 端口+临时 sqlite+cookie jar），
 非 mock，测完整中间件链（sessionMiddleware→requireProfile→路由→repo→db）。

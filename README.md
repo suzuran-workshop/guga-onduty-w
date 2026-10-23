@@ -45,37 +45,39 @@
 - **安装步骤**：
   ```bash
   pnpm install
-  cp apps/server/.env.example apps/server/.env   # 填入 SESSION_SECRET（>=32 bytes）
   pnpm db:seed          # 建表（drizzle 迁移）+ 灌种子数据
   ```
+  > 无需手建 `.env`：`pnpm db:seed` / `pnpm dev:server` 会经 `ensure-env` 自愈——
+  > 真实 env 优先，否则自动生成 `>=32` 字节的 `SESSION_SECRET` 并落盘（已被 .gitignore 忽略）。
+  > 要自定义端口/方言等配置，再 `cp apps/server/.env.example apps/server/.env` 修改。
 - **启动（开发模式）**：
   ```bash
   pnpm dev:server       # 后端 http://localhost:3000
   pnpm dev:web          # 前端 http://localhost:5173（Vite proxy 转发 /api、/auth、/files）
   ```
-- **测试**：`pnpm test`（后端 99 tests：值周 E2E + 审查回归）
+- **测试**：`pnpm test`（后端 107 tests：值周 E2E + 审查回归 + 配置自愈）
 - 测试账号：admin / teacher1 / student1（值周生）等，密码均为 `123456`
 
 ## 当前状态
 - **阶段**：原型（已完成 @homurajs 底层替换；自二合一仓库拆分）
-- **数据方言**：默认 sqlite；schema 三轨全写（sqlite / pg / rest 派生），保留 standalone 与 qw-pages 双形态部署能力
+- **数据方言**：默认 sqlite；schema 双方言手写（sqlite / pg），`assertSchemaParity` 启动期门禁防漂移
 - **已知限制**：
   - 通知仅做数据记录，未对接真实推送通道（非目标）
-  - rest 轨（qw-pages）repo 为 P4 规划项，当前 standalone(sqlite/pg) 为完整验证主路径
+  - 历史第三轨 `rest`（PostgREST / qw-pages 托管形态）已于 2026-10-23 移除，聚焦 standalone 独立部署（见 ADR-7）
 
 ## 核心技术
 - **应用底座**：[@homurajs](https://www.npmjs.com/org/homurajs) 五模块
-  - `app-kit`：createApp 中间件链装配 + 双形态 RuntimeAdapter（standalone / qw-pages）
-  - `core`：运行形态探测、配置装载（defineConfig，配置即文档）、结构化日志、TTL-KV
-  - `db`：Drizzle 双方言（node:sqlite / postgres-js）+ PostgREST rest 轨 + schema parity 门禁
+  - `app-kit`：createApp 中间件链装配 + RuntimeAdapter（standalone）
+  - `core`：配置装载（defineConfig，配置即文档）、结构化日志、TTL-KV、env-file
+  - `db`：Drizzle 双方言（node:sqlite / postgres-js）+ schema parity 门禁
   - `auth`：OAuth2/TextPassword(scrypt) + 自管 session（HS256 短 JWT + refresh rotate + 族吊销）
-  - `storage`：local-fs 对象存储 + `/files/<key>` 代理路由
-- **后端**：Hono + Drizzle ORM（repository 模式，三轨装配）
+  - `storage`：DB 分块对象存储（`createDrizzleFileStore`，运行时自建表）+ `/files/<key>` 代理路由
+- **后端**：Hono + Drizzle ORM（repository 模式，双方言装配）
 - **前端**：Vite + React 19 + shadcn/ui (Tailwind CSS) + react-router + i18next + recharts + sonner
 - **类型共享**：pnpm workspace（apps/server + apps/web + packages/shared）
 - **认证**：cookie 会话（HttpOnly access+refresh）+ Bearer 兼容；身份(auth users) 与业务档案(userProfiles) 分离
 - **实时**：SSE（记录流 + 排名流 + 大屏推送）
-- **数据库**：sqlite（默认，零依赖）/ PostgreSQL / PostgREST，迁移由 drizzle-kit 从 schema 生成（双方言）
+- **数据库**：sqlite（默认，零依赖）/ PostgreSQL，迁移由 drizzle-kit 从 schema 生成（双方言）
 
 ## 文档
 - `docs/PRD.md` — 值周域产品需求

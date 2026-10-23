@@ -1,9 +1,11 @@
 /**
  * 分块上传路由 —— 配合 @homurajs/storage/chunk-client（浏览器逐块 raw PUT）+ DB 分块后端。
  *
- * 为什么要分块：qw-pages 边缘网关对单请求 body 有 ~1MB 硬上限（实测 ≥1MB openresty 413），
- * 一次性 multipart 传手机大图必被拦。前端把图切成 ≤384KB 的块、每块一个小请求，即可绕过；
- * 服务端把块 base64 落进 homura_files/homura_file_chunks（rest 轨）或同名表（drizzle 轨）。
+ * 历史：强制分块原本是为绕开 qw-pages 边缘网关单请求 body ~1MB 硬上限（实测 ≥1MB openresty 413）。
+ * rest/qw-pages 轨已于 2026-10-23 移除（ADR-7），standalone 下 app.ts bodyLimit 为 50MB，
+ * 分块不再是必需。但本路由 + 前端 chunk-client 在 drizzle 轨照常工作、实现完整，故保留
+ * （最小改动、零回归）；是否退回纯 multipart 见 storage/build.ts 的独立后续决策说明。
+ * 服务端把块 base64 落进 homura_files/homura_file_chunks（createDrizzleFileStore 运行时自建）。
  *
  * 协议（与 chunk-client 严格对齐；init/complete 返回**裸协议对象**，不套 {success,data} 信封）：
  *   POST /init    { ns?, fileName, contentType, totalSize, chunkSize? } → { objectKey, url, chunkCount, chunkSize }
