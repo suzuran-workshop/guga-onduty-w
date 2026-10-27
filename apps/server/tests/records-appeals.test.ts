@@ -284,6 +284,52 @@ describe('申诉状态机（事务联动）', () => {
     expect(mine.reviewerId).toBeTruthy();
   });
 
+  // 「清空标签」是 UI 上的一个真实操作（申诉对话框有「清空标签（0 分）」按钮），
+  // 其语义必须与「不传 tag_ids」**区分开**：后者保持原集（分数不变），前者是「本次不扣分」
+  // —— score 归 0 但记录仍 active、仍计入记录数（不是撤销）。这条用例锁住二者不混淆。
+  it('admin 批准（tag_ids 为空数组）→ score 归 0，但记录仍 active 且计入统计', async () => {
+    const id = await createDeductionOnCls1(); // -1
+    const teacher = await h.loginAs('teacher1');
+    await teacher.req('POST', `/api/v1/records/${id}/appeal`, { body: { reason: '当时已整改' } });
+
+    const admin = await h.loginAs('admin');
+
+    // 排名的聚合口径是「该班当周全部记录」，而本文件的其它用例已在同一周给 cls1 打过扣分，
+    // 故**不能**断言 negativeCount 的绝对值（那依赖执行顺序，是假隔离）。
+    // 正确写法是取 approve 前后的**差值**：清空标签应当让这条记录不再贡献一次扣分。
+    const rankOf = async () => {
+      const rk = await admin.req('GET', '/api/v1/statistics/ranking', { query: { week: '2026-W41' } });
+      const row = rk.json.data.find((x: any) => x.classId === seed.cls1.id);
+      if (!row) throw new Error('排名里没有 cls1');
+      return row as { recordCount: number; negativeCount: number; totalScore: number };
+    };
+    const before = await rankOf();
+
+    const r = await admin.req('POST', `/api/v1/records/${id}/appeal/approve`, {
+      body: { review_comment: '属实，撤销本次扣分', tag_ids: [] },
+    });
+    expect(r.status).toBe(200);
+
+    const after = await admin.req('GET', `/api/v1/records/${id}`);
+    expect(after.json.data.score).toBe(0);        // 空标签集 → 0 分（分数由标签派生）
+    expect(after.json.data.status).toBe('active'); // 不是撤销：记录仍然存在且生效
+    expect(after.json.data.tags).toEqual([]);      // 标签被清空
+
+    // 仍计入统计（active 与 appealing 都属 SCORED_STATUSES）：
+    //  - recordCount 不变 —— 记录没被撤销，只是分数归零
+    //  - negativeCount 少 1 —— 分数不再 < 0，这条不再是「扣分」
+    //  - totalScore 多 1     —— 从 -1 变 0，正是「修改而非撤销」的可观测后果
+    const rankAfter = await rankOf();
+    expect(rankAfter.recordCount).toBe(before.recordCount);
+    expect(rankAfter.negativeCount).toBe(before.negativeCount - 1);
+    expect(rankAfter.totalScore).toBe(before.totalScore + 1);
+
+    // 调分史留痕：logs 含 adjust，管理员之后能看出「这条曾经扣过分，被申诉调成 0」
+    const logs = await admin.req('GET', `/api/v1/records/${id}/logs`);
+    expect(logs.status).toBe(200);
+    expect(logs.json.data.map((l: any) => l.action)).toContain('adjust');
+  });
+
   it('admin 批准（不带 tag_ids）→ 保持原标签，仅状态回 active', async () => {
     const id = await createDeductionOnCls1(); // -1
     const teacher = await h.loginAs('teacher1');
