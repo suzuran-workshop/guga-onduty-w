@@ -152,10 +152,8 @@ export async function seed(): Promise<void> {
   });
 
   // ── 设置 ──
-  await R.settings.upsertMany(c1.id, [
-    { key: 'appeal_enabled', value: 'true' },
-    { key: 'auto_notify_teachers', value: 'true' },
-  ]);
+  // 只种 appeal_enabled：auto_notify_teachers 是死键（零消费方），已于 2026-10-23 移除
+  await R.settings.upsertMany(c1.id, [{ key: 'appeal_enabled', value: 'true' }]);
   await R.settings.upsertMany(c2.id, [{ key: 'appeal_enabled', value: 'true' }]);
 
   logger.info('Seed data inserted successfully.');

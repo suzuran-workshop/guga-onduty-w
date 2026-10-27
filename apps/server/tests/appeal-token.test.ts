@@ -351,6 +351,67 @@ describe('教师侧可见性：免登录申诉对本人可见（身份 OR 过滤
   });
 });
 
+describe('申诉开关（settings.appeal_enabled）真正生效', () => {
+  // 该键曾是**死开关**（零消费方）：管理员关掉它，申诉照样能提交 —— 一个撒谎的 UI。
+  // 现两个入口（系统内 + 免登录令牌）都过 utils/appeal-enabled.ts。
+  // 这些用例锁住「关掉即关不掉申诉」这件事不会回归。
+  const setAppealEnabled = (v: 'true' | 'false') =>
+    h.booted.repos.settings.upsertMany(seed.c1.id, [{ key: 'appeal_enabled', value: v }]);
+
+  it('关闭申诉后：免登录链接提交 → 403 APPEAL_DISABLED，且令牌未被烧', async () => {
+    const recordId = await makeDeduction();
+    const token = await issueToken(recordId);
+    await setAppealEnabled('false');
+    try {
+      const anon = h.client();
+      // 表单打开时如实告知「本校区已关闭申诉」，而不是笼统的「不可申诉」（后者暗示稍后再试）
+      const peek = await anon.req('GET', `/api/public/appeal/${token}`);
+      expect(peek.json.data.tokenState).toBe('disabled');
+
+      const post = await anon.req('POST', `/api/public/appeal/${token}`, { body: { reason: '想申诉' } });
+      expect(post.status).toBe(403);
+      expect(post.json.error.code).toBe('APPEAL_DISABLED');
+
+      // 关键：开关是**配置**不是令牌问题 —— 重新打开后同一链接仍可用（没被烧掉）
+      await setAppealEnabled('true');
+      const after = await anon.req('POST', `/api/public/appeal/${token}`, { body: { reason: '想申诉' } });
+      expect(after.status).toBe(201);
+    } finally {
+      await setAppealEnabled('true');
+    }
+  });
+
+  it('关闭申诉后：系统内教师申诉同样被拒（开关管住两个入口，不只管一半）', async () => {
+    const recordId = await makeDeduction();
+    await setAppealEnabled('false');
+    try {
+      const t1 = await h.loginAs('teacher1');
+      const r = await t1.req('POST', `/api/v1/records/${recordId}/appeal`, { body: { reason: '想申诉' } });
+      expect(r.status).toBe(403);
+      expect(r.json.error.code).toBe('APPEAL_DISABLED');
+      // 记录未被置为 appealing（拒绝发生在状态转换之前）
+      expect((await h.booted.repos.records.findByIdWithDetails(recordId))?.status).toBe('active');
+    } finally {
+      await setAppealEnabled('true');
+    }
+  });
+
+  it('键缺失时放行（新校区从未写过该键 → 不能全员无法申诉）', async () => {
+    const recordId = await makeDeduction();
+    // seedStandard 写入 appeal_enabled=true；这里直接删掉该键模拟「从未配置」的校区
+    await h.booted.repos.settings.upsertMany(seed.c1.id, [{ key: 'appeal_enabled', value: '' }]);
+    try {
+      const token = await issueToken(recordId);
+      const anon = h.client();
+      // '' 不是 'false' → 放行（只有显式 false 才禁用）
+      const peek = await anon.req('GET', `/api/public/appeal/${token}`);
+      expect(peek.json.data.tokenState).toBe('ok');
+    } finally {
+      await h.booted.repos.settings.upsertMany(seed.c1.id, [{ key: 'appeal_enabled', value: 'true' }]);
+    }
+  });
+});
+
 describe('公开路由边界', () => {
   it('无会话访问 /api/v1/appeals → 401；/api/public/appeal/:token → 200（闸门内外的分界）', async () => {
     const anon = h.client();

@@ -27,6 +27,7 @@ import type { AppealTokenPeek, AppealTokenState, AppealTokenSubmitResult, Public
 import type { RouteDeps } from './_deps.js';
 import { ok, created, ApiError } from '../http/respond.js';
 import { sha256Hex } from '../utils/token.js';
+import { isAppealEnabled } from '../utils/appeal-enabled.js';
 
 /** 申诉理由长度上限（防止把申诉表单当留言板灌库；正常申诉理由远短于此） */
 const MAX_REASON_LENGTH = 2000;
@@ -72,6 +73,8 @@ function stateToError(state: AppealTokenState): ApiError {
       return ApiError.conflict('该班级未绑定班主任，无法申诉', 'CLASS_UNBOUND');
     case 'rebound':
       return ApiError.forbidden('该班级已更换班主任，此链接已失效');
+    case 'disabled':
+      return ApiError.forbidden('本校区已关闭申诉功能', 'APPEAL_DISABLED');
     default:
       // 'ok' 不会走到这里；兜底防止新增 AppealTokenState 成员时静默放行
       return ApiError.conflict('申诉链接不可用', 'APPEAL_TOKEN_INVALID');
@@ -99,6 +102,12 @@ export function createAppealTokenRoutes(deps: RouteDeps): Hono {
 
     const record = await repos.records.findByIdWithDetails(state.recordId);
     if (!record) return { ok: false, state: 'record_gone' };
+    // 校区申诉开关（settings.appeal_enabled）。放在状态判定**之前**：
+    // 关闭申诉时若先判状态，会误报 not_appealable（暗示「稍后再试」），
+    // 而实情是整个校区关了申诉 —— 两种提示的处置方式完全不同。
+    if (!(await isAppealEnabled(repos, record.campusId))) {
+      return { ok: false, state: 'disabled', record };
+    }
     if (record.status !== 'active') {
       // 记录已被撤回 / 申诉处理中 / 已调整——令牌仍有效但申诉语义不成立，如实告知
       return { ok: false, state: 'not_appealable', record };

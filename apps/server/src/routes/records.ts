@@ -15,6 +15,7 @@ import { getProfile, requireRole, resolveCampusId } from '../middleware/profile.
 import { ok, created, ApiError, parsePagination } from '../http/respond.js';
 import { EventBus } from '../utils/event-bus.js';
 import { resolveDingtalkUserId } from '../platform/resolve-identity.js';
+import { isAppealEnabled } from '../utils/appeal-enabled.js';
 import type { RecordStatus } from '@guga-onduty-w/shared';
 
 const IMAGE_NS = 'records'; // 命名空间基名；上传拼成 records/<campusId>（REVIEW #5）
@@ -196,6 +197,12 @@ export function createRecordRoutes(deps: RouteDeps): Hono {
     const record = await repos.records.findByIdWithDetails(recordId);
     if (!record) throw ApiError.notFound('记录不存在');
     if (record.campusId !== profile.campusId) throw ApiError.forbidden('不能跨校区申诉');
+    // 申诉开关（settings.appeal_enabled，按校区）。此前该键是**死开关**（零消费方），
+    // 管理员关掉它申诉照样能提交；现真正生效。判定语义见 utils/appeal-enabled.ts：
+    // 只有显式 'false' 才禁用，键缺失一律放行（否则新校区会全员无法申诉）。
+    if (!(await isAppealEnabled(repos, record.campusId))) {
+      throw ApiError.forbidden('本校区已关闭申诉功能', 'APPEAL_DISABLED');
+    }
     // 归属校验：班主任只能申诉自己任班主任的班。
     // classes.teacherDingtalkId 存的是**钉钉 userid**，而登录态是 profile.userId（系统 users.id），
     // 二者经 oauth2_identity_links 关联（教师用钉钉 OAuth 登录后 SDK 写入）→ 先解析成钉钉 userid 再比对。

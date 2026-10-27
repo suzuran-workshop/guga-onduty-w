@@ -287,10 +287,10 @@ async function main() {
 
   // ═══════════ settings（upsert 事务）═══════════
   console.log('[settings]');
-  await R.settings.upsertMany(c1.id, [{ key: 'appeal_enabled', value: 'true' }, { key: 'auto_notify_teachers', value: 'true' }]);
+  await R.settings.upsertMany(c1.id, [{ key: 'appeal_enabled', value: 'true' }]);
   const map = await R.settings.getMap(c1.id);
   ok('upsertMany + getMap', map);
-  assert(map.appeal_enabled === 'true' && map.auto_notify_teachers === 'true', 'settings map 正确');
+  assert(map.appeal_enabled === 'true', 'settings map 正确');
   // upsert 覆盖
   await R.settings.upsertMany(c1.id, [{ key: 'appeal_enabled', value: 'false' }]);
   const map2 = await R.settings.getMap(c1.id);

@@ -493,7 +493,8 @@ export type AppealTokenState =
   | 'record_gone'    // 令牌有效但原记录已不存在
   | 'not_appealable' // 记录当前状态不可申诉（已撤回/已在申诉中/已调整）
   | 'unbound'        // 班级未绑定班主任
-  | 'rebound';       // 班级已换班主任（旧令牌失效，防离任者代申诉）
+  | 'rebound'        // 班级已换班主任（旧令牌失效，防离任者代申诉）
+  | 'disabled';      // 该校区已关闭申诉功能（settings.appeal_enabled === 'false'）
 
 /** GET /api/public/appeal/:token 回显的记录（公开端点最小披露：不含 recorderId 等内部字段） */
 export interface PublicAppealRecord {

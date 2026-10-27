@@ -40,13 +40,15 @@ export function createSettingRoutes(deps: RouteDeps): Hono {
       const value = String(e?.value ?? '');
       switch (key) {
         case 'appeal_enabled':
-        case 'auto_notify_teachers':
           if (value !== 'true' && value !== 'false') {
             throw ApiError.badRequest(`${key} 须为 'true'/'false'，收到：${value}`);
           }
           break;
         default:
-          throw ApiError.badRequest(`未知设置项：${key}（白名单：appeal_enabled/auto_notify_teachers）`);
+          // 2026-10-23：移除死键 auto_notify_teachers —— 全仓零消费方（只有 seed/白名单/
+          // 前端 Switch 三处），关掉它推送照发，是个撒谎的开关。推送是否启用由**凭证是否配齐**
+          // 决定，见 GET /dingtalk/status 与系统设置页的「推送状态」（如实展示未启用原因）。
+          throw ApiError.badRequest(`未知设置项：${key}（白名单：appeal_enabled）`);
       }
       validated.push({ key, value });
     }

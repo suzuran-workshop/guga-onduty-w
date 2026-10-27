@@ -24,8 +24,13 @@ export class ApiError extends Error {
   static unauthorized(message = '未认证') {
     return new ApiError(401, 'UNAUTHORIZED', message);
   }
-  static forbidden(message = '权限不足') {
-    return new ApiError(403, 'FORBIDDEN', message);
+  /**
+   * 403。code 可覆盖（与其余工厂方法一致）：默认 FORBIDDEN 不足以让前端区分
+   * 「角色无权」与「业务上不允许」（如校区关闭申诉 APPEAL_DISABLED、班级换绑后
+   * 令牌失效），而这两者的用户提示与处置完全不同。
+   */
+  static forbidden(message = '权限不足', code = 'FORBIDDEN') {
+    return new ApiError(403, code, message);
   }
   static notFound(message: string, code = 'NOT_FOUND') {
     return new ApiError(404, code, message);

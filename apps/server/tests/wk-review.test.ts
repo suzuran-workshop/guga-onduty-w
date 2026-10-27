@@ -217,8 +217,17 @@ describe('#7 settings key 白名单 + 值校验', () => {
   });
   it('合法白名单键仍正常（不误伤）', async () => {
     const admin = await h.loginAs('admin');
-    const r = await admin.req('PUT', '/api/v1/settings', { body: { settings: [{ key: 'appeal_enabled', value: 'true' }, { key: 'auto_notify_teachers', value: 'false' }] } });
+    const r = await admin.req('PUT', '/api/v1/settings', { body: { settings: [{ key: 'appeal_enabled', value: 'true' }] } });
     expect(r.status).toBe(200);
+  });
+  // 2026-10-23：auto_notify_teachers 是死键（零消费方），关掉它推送照发 —— 撒谎的开关已下线。
+  // 推送启用与否由凭证决定（GET /dingtalk/status），不是这个键。锁住它不再被接受，
+  // 免得将来有人「顺手」把它加回来又当成功能用。
+  it('已下线的死键 auto_notify_teachers → 400（推送开关由凭证状态决定，不是这个键）', async () => {
+    const admin = await h.loginAs('admin');
+    const r = await admin.req('PUT', '/api/v1/settings', { body: { settings: [{ key: 'auto_notify_teachers', value: 'false' }] } });
+    expect(r.status).toBe(400);
+    expect(r.json.error.message).toContain('appeal_enabled'); // 错误信息告知真实白名单
   });
 });
 
