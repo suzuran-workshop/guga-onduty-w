@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@guga-onduty-w/shared": "workspace:*",
-    "@homurajs/storage": "26.10.19",
+    "@homurajs/storage": "26.10.27",
     "@radix-ui/react-avatar": "^1.1.2",
     "@radix-ui/react-dialog": "^1.1.4",
     "@radix-ui/react-dropdown-menu": "^2.1.4",

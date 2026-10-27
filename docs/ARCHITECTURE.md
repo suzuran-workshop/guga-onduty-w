@@ -166,7 +166,9 @@ auth SDK（@homurajs/auth）           业务档案（本项目）
 
 - **drizzle-orm@1.0.0-rc.4** 是 rc 版，API 可能变动；已锁版本 + spike 验证核心路径
 - node:sqlite 同步 API，适合校内并发；多实例部署 SSE 需改 Redis Pub/Sub
-- **@homurajs 包 26.10.19**；storage 的 ./db、./tables 子路径自该版本起已随包发布（此前 26.10.15 曾漏发）
+- **@homurajs 包 26.10.27**（七包统一版本）；storage 的 ./db、./tables 子路径自 26.10.19 起已随包发布（此前 26.10.15 曾漏发）。
+  ⚠ 26.10.27 的发版交接见 `DECISIONS.md` ADR-8 —— 在 homura push main 触发 CI 发布、
+  且本仓库 `pnpm install` 更新锁文件之前，`pnpm install` 会因 npm 上无该版本而失败
 - 无 Docker/k8s 部署配置（原型阶段）
 
 ## 测试策略（190 tests）
