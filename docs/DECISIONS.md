@@ -105,3 +105,100 @@
 - **何时重新审视**：若将来确需 qw-pages 托管形态，应重新评估——但届时 storage 与 repo 需按新平台契约重写，
   而非恢复本次删除的 rest 轨代码。
 
+## ADR-8：钉钉集成——教师不进系统（推送 + 免登录申诉 + 周报）
+
+- **日期**：2026-10-27
+- **状态**：已采纳（**显式修订** AGENTS.md / README.md 的「非目标」与 PRD 原文）
+
+- **背景**：需求 4 的原话是「教师不需要专门进入系统，她们在班级收到评价后都会立刻收到钉钉推送
+  （扣分则附带一个申诉链接，填写后管理员收到），每周收到得分扣分总计」。
+  这与仓库既有 scope **直接冲突**：AGENTS.md 与 README.md 都把「对接真实推送通道」列为明确非目标，
+  ARCHITECTURE.md 写着「通知仅做数据记录」，PRD 的班主任场景是「收到扣分通知，查看详情，发起申诉」
+  ——隐含「进系统」。全仓 `grep -iE "钉钉|dingtalk"` 当时零命中，是纯绿地。
+  更底层的障碍：`@homurajs/3p` 的钉钉实现经**真实凭证实测四个能力全部不可用**，
+  而 spec 与 homura 能力矩阵都标着 ✅（纯 stub 测试造成的假绿灯）。
+
+- **决策**：接入真实钉钉通道，并**推翻**上述 scope 条目。班主任走「钉钉推送 → 免登录链接 → 直接申诉」，
+  全程不进系统、不需要系统账号。
+
+- **关键选型**（每项都对应一个被否掉的替代方案）：
+  - **推送通道 = 企业应用工作通知 `asyncsend_v2`**（agentId 经实测为合法值）。
+    否掉群机器人 webhook：工作通知直达个人会话、可读回执、且能带 link 类型消息承载申诉入口；
+    群消息无法定向到某班班主任，也会让扣分公示给全班。
+  - **教师身份 = 通讯录反查 userid，不依赖 OAuth 登录**。
+    这是本 ADR 最关键的取舍：若把「教师用钉钉 OAuth 登录过」当作推送前置，就与「不进系统」自相矛盾
+    ——她从没登录过，就没有 `oauth2_identity_links`，也就找不到推送目标。
+    故推送链路只依赖 `classes.teacherDingtalkId`（管理员从同步下来的通讯录里绑定），
+    OAuth 关联降级为**可选增强**（仅用于「系统内申诉」这条次要路径）。
+  - **绑定键存钉钉 userid（text），不存系统 userId（uuid）**。
+    钉钉 userid 形如 `5314054424-444663015`，不是 uuid——存 uuid 列会被 pg 直接拒绝写入。
+    存 userid 还让推送链路零转换（`asyncsend_v2` 要的就是它），且教师从未登录也能收到。
+    代价（已与产品确认接受）：账密登录的教师无法在系统内证明自己是那位钉钉班主任，
+    故系统内申诉 **fail-closed 拒绝**并引导走免登录链接。
+  - **申诉入口 = 签名令牌公开链接**，挂 `/api/public/appeal/:token`（在 `/api/v1/*` 登录闸门**之外**），
+    前端页面挂 `/appeal/:token`（与 `/bigscreen` 平级，在 ProtectedRoute 之外）。
+    令牌绑定 recordId + 教师钉钉 userid + 过期 + **一次性原子消费**，只存 SHA-256（拖库也无法构造可用链接）。
+    否掉「教师登录系统申诉」：那正是需求要消灭的动作。
+    转发链接 = 转发申诉权，此风险显式接受（工作通知只进本人会话，损害被「一次性 + TTL + 班级绑定校验」
+    限制为单条记录的一次申诉）。
+  - **取图走令牌作用域端点** `GET /:token/image/:index`，不复用 `/files/*`。
+    `/files/*` 自带 requireProfile + 校区校验，免登录教师无会话会全 401；
+    而照片正是「扣分必拍照」的证据，看不到照片就无法有效申诉。
+    按**序号**而非 objectKey 寻址：教师无法构造 key 去看他班照片，越权面为零。
+  - **周报 = 进程内定时器 + 管理员可补发**。项目此前无任何 scheduler 基础设施。
+    用「每 5 分钟检查是否到点」而非「setTimeout 算到目标的毫秒差」——后者在进程休眠/时钟调整后
+    可能永不触发，前者自愈。幂等靠 `notificationLogs.dedupeKey` 唯一索引。
+    否掉外部 cron：原型阶段引入部署依赖不划算，且补发按钮已覆盖「错过就发不出去」的场景。
+
+- **必须记住的三个坑**（`services/notify.ts` 已处理，改动时勿回退）：
+  1. **`errcode:0 ≠ 送达`**：`asyncsend_v2` 是异步任务，发给**不存在的 userid 也返 `errcode:0` + task_id**
+     （实测确认）。只有 `getsendresult` 的 `invalid_user_id_list` 才暴露失败。
+     不查回执 = 推送失败被静默记成成功，而这正是最难被发现的一类故障（教师说没收到，日志说发了）。
+  2. **EventBus listener 必须 fire-and-forget**：`emit` 是同步的且发生在 `return created()` 之前，
+     listener 里 `await` 钉钉（15s timeout）会**阻塞打分请求**。
+     配套地，`EventBus.emit` 现在逐个 listener try/catch + 对返回的 Promise 挂 `.catch`
+     ——此前 listener 抛错会冒泡，直接把「创建记录」500 掉。
+  3. **凭证缺失要降级不要抛错**：未配 appKey/appSecret/agentId 时 `buildPlatform` 返回
+     `platform: null`，通知落库为 `pending`（不阻塞主链路），凭证到位后
+     `POST /dingtalk/notifications/flush` 补发。这样「先把业务跑起来、后配钉钉」是安全的。
+
+- **为什么不是家校通讯录**：班主任↔班级关系的**权威**其实在钉钉家校通讯录里，但
+  (a) 需额外权限 `qyapi_addresslist_edu_read`（尚未开通）；
+  (b) 家校子树 `dept_id=-7` **不能用普通部门 API 递归**（实测返 `40009 不合法的部门id`）。
+  故 3p 的 `fetchAllContacts` 自动跳过负数 dept_id，并对家校能力做**探测式降级**
+  （未开通时返回 `{available:false, reason}` 而非抛错）。本系统按产品要求**只引入组织通讯录**，
+  班主任绑定改由管理员在 ConfigPage 下拉指定（下拉 label 带部门名以消歧重名）。
+
+- **顺带清理的两个撒谎开关**：
+  - `settings.auto_notify_teachers`：全仓零消费方（仅 seed/白名单/前端 Switch），关掉它推送照发
+    → **下线**，并加用例锁住它不再被接受（免得将来有人加回来又当成功能用）。
+  - `settings.appeal_enabled`：同样是死开关 → **接活**（申诉开关是合理的管理需求，比删更合适），
+    抽出 `utils/appeal-enabled.ts` 作唯一裁决点，**两个申诉入口都过它**（只管一半仍是撒谎）。
+    语义为「只有显式 `'false'` 才禁用」，键缺失一律放行——settings 按校区存，
+    新校区从未写过该键，把缺失当禁用会**全员无法申诉**。
+
+- **连带修订的文档**（否则代码与需求互相矛盾）：
+  - PRD：班主任场景改「不进系统」；补核心问题 6（教师不会为一条扣分专门登系统）；
+    功能表四处实质变更（多标签求和+标签分权威、扣分必拍照、申诉成立即调分、红旗仅人工颁发）
+  - AGENTS.md / README.md：「对接真实推送通道」从非目标移入范围内，并显式标注被推翻
+  - ARCHITECTURE.md：大图加钉钉外部系统与公开路由；identity link 从「未用」改「已用」；
+    数据流三段全改（多班级多标签、score 服务端求和、approve 调分、红旗人工）；表数 18→21；测试数 107→190
+
+- **3p 的前置修复**：本决策依赖 `@homurajs/3p` 钉钉能力可用，而实测其**四个能力全坏**
+  （根因是 `request()` 一律只放 header 认证，而 `oapi/topapi` 只认 `?access_token=` query 参数
+  → `errcode:88 access_token is blank`；另有三个端点路径本身就是错的）。
+  已在 homura 仓库修复并新增 `fetchAllContacts`/`getSendResult`/`listMicroApps` 等公共接口，
+  桩测试改为**按完整 URL 精确断言**（含认证方式），并补了 env 门控的真实端点集成测试。
+
+- **后果与后续**：
+  - 推送与周报是**进程内**的：多实例部署会重复推送。周报可关 `WEEKLY_REPORT_ENABLED` 靠管理员补发，
+    但扣分推送无幂等键（同一记录不该被推两次由「记录只创建一次」保证），
+    多实例前需把 EventBus 换成 Redis Pub/Sub 或加投递去重。
+  - 教师钉钉 OAuth 登录**尚未装配**（`createAuthRoutes` 未传 `oauth2`）。装配有三个硬缺口：
+    JIT 建户不建 `userProfiles`（会 403 PROFILE_NOT_FOUND，且 campusId NOT NULL + role 有 CHECK 约束，
+    钉钉身份里都拿不到）→ 需自定义 IdentityResolver 或「管理员预绑定」流程；
+    `allowRegister:false` 与 JIT 语义冲突；`oauth2-dingtalk` IdP 仓库不在本机，
+    其 `mapUser` 产出的 `sub` 是否等于钉钉企业 userid **无法核实**。
+    正因这个未知量，推送链路刻意**不依赖** OAuth（见上「教师身份」选型）。
+  - `dailySummaries.notifiedTeachers` 仍恒为 null（唯一写入点从请求体透传，而前端从不传）——
+    本轮未接，列为独立后续决策。

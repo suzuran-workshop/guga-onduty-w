@@ -6,6 +6,13 @@
 > rest 轨与 qw-pages 形态**已于 2026-10-23 移除**，收敛为 sqlite/pg 双方言、standalone 单形态
 > （见 `DECISIONS.md` **ADR-7**）。**当前架构以 `ARCHITECTURE.md` 为准。**
 >
+> ⚠️ **追加（2026-10-27）**：本文档中的 schema 叙述同样**已过时**——`records.tagId`(int 单值) 已改为
+> `tagIds`(JSON 数组) 且 score 由服务端按标签求和；`RECORD_STATUSES` 的 `appeal_approved` **已移除**
+> （申诉成立改为「调分后回 active」，故下文「✅ `appeal_approved` 记录不计分」记载的是当时结论，
+> 该状态如今不存在）；所有 id 均为 uuid（下文表格中的 `(int)` 标注是迁移当时的旧形态）。
+> 另新增钉钉域 3 表（dingtalkContacts / notificationLogs / appealTokens），业务表 13→16、含 auth 共 21 表。
+> 见 `DECISIONS.md` **ADR-8**。
+>
 > 状态：已完成 · 起始快照 `snapshot/pre-homura-baseline`(ad886f3)
 > 目标：用 `@homurajs/*` 家族替换应用底层（core/db/auth/storage/app-kit 五模块尽用），
 > 前端 UI/UX 迁移到 Vite 8 + React 19 + shadcn/ui (Tailwind CSS 3)。
