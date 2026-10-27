@@ -203,36 +203,36 @@
   - `dailySummaries.notifiedTeachers` 仍恒为 null（唯一写入点从请求体透传，而前端从不传）——
     本轮未接，列为独立后续决策。
 
-- **`@homurajs/3p` 发版交接（2026-10-27 状态：待发版，顺序不可颠倒）**：
+- **`@homurajs/3p` 发版（2026-10-27 已完成）**：
 
   guga 的钉钉域依赖 3p 的新接口，而 npm 上已发布的 **26.10.19 不含它们**
   （实测解包确认 `fetchAllContacts` / `getSendResult` / `listMicroApps` / `getUserByMobile` 全无）。
   在 3p 修复发版之前，本仓库靠 `link:../../../homura/packages/3p` 指向本机源码才跑得通——
   这意味着**换一台机器 `pnpm install` 会装到没有这些接口的版本，通讯录同步与推送回执直接失效**。
 
-  已完成（homura 仓库，提交 `cf2875e`，**未 push**）：根版本 `26.10.19 → 26.10.27`
+  homura 侧（提交 `cf2875e`，已 push main）：根版本 `26.10.19 → 26.10.27`
   （CalVer YY.MM.DD，符合 `release.yml` 门禁）→ `sync-version.mjs` 派生同步 7 个发布包 →
-  `pnpm preflight` 两道门禁通过 → `pnpm --filter @homurajs/3p build` 重建 dist
-  （确认 7 个新接口均在产物中）→ 3p 测试 44 passed / 7 skipped（live 用例按 env 门控）。
+  `pnpm preflight` 两道门禁通过 → `pnpm --filter @homurajs/3p build` 重建 dist →
+  3p 测试 44 passed / 7 skipped（live 用例按 env 门控）。
+  `release.yml` 是「push main 即发版」，CI 自动 build + publish 全部 7 个 `@homurajs/*`
+  （**不需要本地 `npm login`**）；`26.10.27` 已于 2026-10-27T08:48:49Z 发布。
 
-  已完成（本仓库，提交见下）：`apps/server` 与 `apps/web` 的 7 处 `@homurajs/*` 声明
-  全部改为 `26.10.27`，`link:` 已移除。homura 是统一版本 monorepo（7 包同版本一起发），
-  故全部对齐而非只升 3p——版本参差会造成解析混乱。
+  本仓库侧：`apps/server` 与 `apps/web` 的 7 处 `@homurajs/*` 声明全部改为
+  `26.10.27`（homura 是统一版本 monorepo，7 包同版本一起发，故全部对齐而非只升 3p——
+  版本参差会造成解析混乱），`link:` 已移除；`pnpm-lock.yaml` 随之改为真实解析（含各包 integrity），
+  `pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` 补入 26.10.27
+  （该项是「新发布版本的安装豁免」，缺它则刚发布的包会被 `minimumReleaseAge` 拦下）。
 
-  ⚠ **`pnpm-lock.yaml` 此刻仍是 `link:`/26.10.19，无法提前更新**：实测
-  `pnpm install --frozen-lockfile` 报 `ERR_PNPM_OUTDATED_LOCKFILE`，普通 install 也会因
-  npm 上不存在 26.10.27 而失败。这是版本 bump 固有的顺序依赖，**必须发版后才能生成锁文件**。
+  **发版后的验证**（这一步不可省）：确认 npm 上的 `26.10.27` 产物含全部 7 个新接口，
+  且认证传输修复在场（`access_token` query 与 `x-acs-dingtalk-access-token` header 两种形态都在，
+  即按 host 分流——这正是当初 3p 四个能力全废的根因），
+  并与本机 link 构建的 dist **字节一致**（`diff -q` 通过）。
+  随后在 `node_modules` 已从本机 link 切换为 `.pnpm/@homurajs+3p@26.10.27` 真实包的状态下
+  重跑 190 tests + 三包 typecheck + 前后端 build，全绿。
 
-  剩余步骤（顺序执行）：
-  1. homura：`git push origin main` —— `release.yml` 是「push main 即发版」，
-     CI 会自动 build + publish 全部 7 个 `@homurajs/*`（版本未变化时自动跳过）。
-     **不需要本地 `npm login`**；需仓库 Settings → Secrets 已配 `NPM_TOKEN`。
-  2. 确认发布成功：`npm view @homurajs/3p versions --json` 应含 `26.10.27`。
-  3. 本仓库：`pnpm install` —— 此时才会拉到 26.10.27 并**更新 `pnpm-lock.yaml`**，
-     把锁文件改动一并提交。
-  4. 回归验证：`pnpm test`（190）+ `pnpm -r typecheck` + `pnpm build`。
-
-  ⚠ **顺序依赖的风险（已知且不可消除，只能按序完成）**：在本仓库 package.json 已声明 26.10.27、
-  而 npm 上还没有该版本期间，任何人 clone 后 `pnpm install` 都会失败（本仓库无 CI，不会被拦下）。
-  当前本机 `node_modules` 仍是 link 形态，故 **190 tests 全绿 ≠ 可安装** ——
-  测试验的是「link 到的源码」，不是「已发布的包」。第 1–3 步完成前，这个窗口应尽可能短。
+  ⚠ **顺序依赖（本次踩到，值得记住）**：package.json 的版本 bump 与锁文件更新**无法同时完成**——
+  实测在 npm 上尚无 26.10.27 时，`pnpm install --frozen-lockfile` 报
+  `ERR_PNPM_OUTDATED_LOCKFILE`，普通 install 也因版本不存在而失败。故必须先发版、再 install 更新锁文件。
+  更隐蔽的一点：在 link 形态下跑绿的测试**并不证明可安装**——它验的是「link 到的本机源码」，
+  不是「已发布的包」。若发版时构建产物陈旧、或发了不含修复的版本，link 下的测试会一路全绿而实际部署即失效。
+  所以「切到真实包后重跑一遍」是发版验收的必要步骤，不是重复劳动。
