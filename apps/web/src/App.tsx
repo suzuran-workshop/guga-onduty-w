@@ -2,9 +2,14 @@
  * 路由 + 守卫 —— react-router 7（docs §3.1）。
  *
  * 路由表（对照旧 App.tsx，路径契约不变）：
- *   /login      登录（已登录则重定向 /）
- *   /bigscreen  数字大屏（公开，无守卫，全屏）
- *   /*          ProtectedRoute（需登录）→ Layout → 8 个业务子路由
+ *   /login          登录（已登录则重定向 /）
+ *   /bigscreen      数字大屏（公开，无守卫，全屏）
+ *   /appeal/:token  免登录申诉（公开，无守卫；教师从钉钉推送点链接直达）
+ *   /*              ProtectedRoute（需登录）→ Layout → 8 个业务子路由
+ *
+ * ⚠ /appeal/:token 必须与 /bigscreen 一样挂在 ProtectedRoute **之外**：需求 4 的前提是
+ *   「教师不需要专门进入系统」，若这条路要求登录，等于自己推翻该前提。
+ *   令牌即凭证（绑定 recordId + 教师钉钉身份 + 过期 + 一次性），不需要会话。
  *
  * 迁移修复：
  *  - 旧代码仅隐藏菜单、无路由级 RBAC（student 手输 /config 可进）→ 新增 RequireRole 守卫。
@@ -26,6 +31,7 @@ import AwardsPage from '@/pages/AwardsPage';
 import ConfigPage from '@/pages/ConfigPage';
 import SettingsPage from '@/pages/SettingsPage';
 import BigScreenPage from '@/pages/BigScreenPage';
+import PublicAppealPage from '@/pages/PublicAppealPage';
 
 /** 全屏加载占位（首屏 /me 探测中） */
 function FullScreenLoader() {
@@ -70,6 +76,8 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/bigscreen" element={<BigScreenPage />} />
+      {/* 免登录申诉（公开）：与 /bigscreen 平级，刻意在 ProtectedRoute 之外 */}
+      <Route path="/appeal/:token" element={<PublicAppealPage />} />
       <Route
         path="/*"
         element={

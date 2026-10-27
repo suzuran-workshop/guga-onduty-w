@@ -475,3 +475,53 @@ export interface NotificationLogInput {
   title?: string | null;
   dedupeKey?: string | null;
 }
+
+// ── 免登录申诉（2026-10-23，需求 4）──────────────────────────────────
+// 教师从钉钉推送点链接申诉，不进系统、不用账密。路由挂 /api/public/appeal/:token
+// （刻意在 /api/v1/* 登录闸门之外），故这套类型是公开端点的 wire 契约。
+
+/**
+ * 令牌/记录的综合状态。公开端点用 **200 + tokenState** 表达全部业务态，
+ * 而非 404/410 —— 「过期」「已消费」是正常业务结局不是异常，
+ * SPA 据此渲染精确提示（避免笼统的「链接失效」让人无法自助排障）。
+ */
+export type AppealTokenState =
+  | 'ok'             // 可申诉（附 record）
+  | 'not_found'      // 令牌不存在（链接被改错/伪造）
+  | 'expired'        // 已过期（缺省 72 小时）
+  | 'consumed'       // 已使用过（一次性）
+  | 'record_gone'    // 令牌有效但原记录已不存在
+  | 'not_appealable' // 记录当前状态不可申诉（已撤回/已在申诉中/已调整）
+  | 'unbound'        // 班级未绑定班主任
+  | 'rebound';       // 班级已换班主任（旧令牌失效，防离任者代申诉）
+
+/** GET /api/public/appeal/:token 回显的记录（公开端点最小披露：不含 recorderId 等内部字段） */
+export interface PublicAppealRecord {
+  id: string;
+  className: string;
+  week: string;
+  score: number;
+  comment: string | null;
+  tags: Array<{ name: string; score: number; color: string; category: TagCategory }>;
+  /**
+   * 现场照片**数量**（不暴露 objectKey）。
+   * 取图走令牌作用域端点 `GET /api/public/appeal/:token/image/:index`——按**序号**而非 key 寻址，
+   * 故教师无法构造 key 去看别的班级照片；且 `/files/*` 在登录闸门内，公开页用不了它。
+   * 「扣分必拍照」的照片正是教师要争辩的证据，看不到照片就无法有效申诉，故此端点是必需的。
+   */
+  imageCount: number;
+  recordedAt: number;
+  status: RecordStatus;
+}
+
+/** GET /api/public/appeal/:token 响应 */
+export interface AppealTokenPeek {
+  tokenState: AppealTokenState;
+  record?: PublicAppealRecord;
+}
+
+/** POST /api/public/appeal/:token 响应 */
+export interface AppealTokenSubmitResult {
+  appealed: true;
+  appealId: string;
+}

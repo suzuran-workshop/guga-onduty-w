@@ -8,7 +8,10 @@
  *  - 统一解包 {success,data,pagination}；success:false 抛 ApiError。
  *  - 401 → 清状态 + 跳登录（由 useAuth 处理，这里只抛）。
  */
-import type { ApiResponse, ApiError as ApiErrorBody, Pagination } from '@guga-onduty-w/shared';
+import type {
+  ApiResponse, ApiError as ApiErrorBody, Pagination,
+  AppealTokenPeek, AppealTokenSubmitResult,
+} from '@guga-onduty-w/shared';
 
 export class ApiClientError extends Error {
   constructor(
@@ -163,3 +166,49 @@ export const authApi = {
 export function fileUrl(objectKey: string): string {
   return `/files/${objectKey}`;
 }
+
+// ── 公开端点（免登录，2026-10-23 需求 4）────────────────────────────
+// ⚠ 不在 /api/v1 下：服务端把登录闸门（requireProfile/requireStudentScope）只挂在 /api/v1/*，
+//   教师从钉钉推送点链接申诉时**没有任何会话**（甚至没有系统账号）。
+//   故单独一组：路径不带 API_BASE 前缀，且不触发 401 全局跳登录（公开端点不会返 401）。
+const PUBLIC_BASE = '/api/public';
+
+export const publicApi = {
+  /**
+   * 令牌作用域的图片 URL（免登录申诉页展示「扣分必拍照」的现场证据）。
+   * ⚠ 不能用 fileUrl(key)：/files/* 自带 requireProfile + 校区校验，而教师走免登录路径
+   *   没有任何会话 → 一律 401（一片裂图）。故按**序号**而非 objectKey 取图，
+   *   教师无法构造 key 去看他班照片，越权面为零。
+   */
+  appealImageUrl(token: string, index: number): string {
+    return `${PUBLIC_BASE}/appeal/${encodeURIComponent(token)}/image/${index}`;
+  },
+  /** 打开申诉表单：peek 令牌（不消费，刷新安全） */
+  async peekAppeal(token: string): Promise<AppealTokenPeek> {
+    const res = await fetch(`${PUBLIC_BASE}/appeal/${encodeURIComponent(token)}`, { credentials: 'include' });
+    const parsed = (await res.json().catch(() => null)) as ApiResponse<AppealTokenPeek> | null;
+    if (!res.ok || !parsed?.success) {
+      throw new ApiClientError('APPEAL_PEEK_FAILED', `无法打开申诉表单（${res.status}）`, res.status);
+    }
+    return parsed.data;
+  },
+  /** 提交申诉（消费令牌，一次性） */
+  async submitAppeal(token: string, reason: string): Promise<AppealTokenSubmitResult> {
+    const res = await fetch(`${PUBLIC_BASE}/appeal/${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+      credentials: 'include',
+    });
+    const parsed = (await res.json().catch(() => null)) as ApiResponse<AppealTokenSubmitResult> | ApiErrorBody | null;
+    if (!res.ok) {
+      const err = parsed as ApiErrorBody | null;
+      throw new ApiClientError(
+        err?.error?.code ?? `HTTP_${res.status}`,
+        err?.error?.message ?? `提交失败（${res.status}）`,
+        res.status,
+      );
+    }
+    return (parsed as ApiResponse<AppealTokenSubmitResult>).data;
+  },
+};

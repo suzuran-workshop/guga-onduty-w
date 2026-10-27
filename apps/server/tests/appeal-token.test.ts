@@ -63,7 +63,9 @@ describe('免登录申诉：令牌生命周期', () => {
     expect(r.json.data.record.status).toBe('active');
     expect(r.json.data.record.score).toBe(-1);
     expect(r.json.data.record.tags[0].name).toBe('迟到');
-    expect(r.json.data.record.images.length).toBeGreaterThan(0); // 扣分记录的照片可供教师查看
+    // 公开端点最小披露：只给照片**数量**，不暴露 objectKey（取图按序号走令牌作用域端点）
+    expect(r.json.data.record.imageCount).toBe(1);
+    expect(r.json.data.record.images).toBeUndefined();
     // 刷新安全：peek 不消费，再开还是 ok
     const again = await anon.req('GET', `/api/public/appeal/${token}`);
     expect(again.json.data.tokenState).toBe('ok');
@@ -136,6 +138,85 @@ describe('免登录申诉：令牌生命周期', () => {
     // 关键：POST 失败源于记录状态而非令牌——令牌仍在，状态恢复后可重试
     const rec = await h.booted.repos.records.findByIdWithDetails(recordId);
     expect(rec?.status).toBe('revoked');
+  });
+});
+
+describe('令牌作用域取图（扣分必拍照的证据必须看得到）', () => {
+  /** 取记录的首个 objectKey（仅测试内部用于对照 /files 的行为） */
+  async function firstObjectKey(recordId: string): Promise<string> {
+    const rec = await h.booted.repos.records.findByIdWithDetails(recordId);
+    const key = rec?.images?.[0];
+    if (!key) throw new Error('记录无图片，测试前置条件不成立');
+    return key;
+  }
+
+  it('GET /:token/image/0 → 200 返回图片字节（无会话可用）', async () => {
+    const recordId = await makeDeduction();
+    const token = await issueToken(recordId);
+    const anon = h.client();
+    const r = await anon.req('GET', `/api/public/appeal/${token}/image/0`);
+    expect(r.status).toBe(200);
+    expect(r.res.headers.get('content-type')).toBe('image/png');
+    // 学生上传的是 2 字节，原样取回（证明走的是 storage 流而非占位图）
+    const bytes = await r.bytes();
+    expect(bytes.length).toBe(2);
+    expect([...bytes]).toEqual([0x89, 0x50]);
+    // 证据材料不得被缓存到共享设备（教师可能在公用手机上打开）
+    expect(r.res.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('设计前提：同一个 objectKey 走 /files/ 需要登录 → 401（故必须有令牌作用域端点）', async () => {
+    const recordId = await makeDeduction();
+    const key = await firstObjectKey(recordId);
+    const anon = h.client();
+    // /files/* 自带 requireProfile + 校区校验；免登录教师没有任何会话 → 一片裂图
+    const r = await anon.req('GET', `/files/${key}`);
+    expect(r.status).toBe(401);
+  });
+
+  it('序号越界 → 404（不泄露实际张数，也不 500）', async () => {
+    const recordId = await makeDeduction();
+    const token = await issueToken(recordId);
+    const anon = h.client();
+    expect((await anon.req('GET', `/api/public/appeal/${token}/image/1`)).status).toBe(404);
+    expect((await anon.req('GET', `/api/public/appeal/${token}/image/-1`)).status).toBe(404);
+    expect((await anon.req('GET', `/api/public/appeal/${token}/image/abc`)).status).toBe(404);
+  });
+
+  it('令牌已消费/过期 → 取图同样被拒（表单与照片共用同一条判定链）', async () => {
+    const recordId = await makeDeduction();
+    const token = await issueToken(recordId);
+    const anon = h.client();
+    // 提交后令牌消费
+    expect((await anon.req('POST', `/api/public/appeal/${token}`, { body: { reason: '校车晚点' } })).status).toBe(201);
+    const after = await anon.req('GET', `/api/public/appeal/${token}/image/0`);
+    expect(after.status).toBe(404);
+    expect(after.json.error.code).toBe('APPEAL_TOKEN_CONSUMED');
+
+    // 过期令牌同样取不到图
+    const recordId2 = await makeDeduction();
+    const expired = await issueToken(recordId2, { ttlMs: -1000 });
+    const r2 = await anon.req('GET', `/api/public/appeal/${expired}/image/0`);
+    expect(r2.status).toBe(404);
+    expect(r2.json.error.code).toBe('APPEAL_TOKEN_EXPIRED');
+  });
+
+  it('记录被撤回 → 取图被拒（链接失效后不再提供证据翻阅）', async () => {
+    const recordId = await makeDeduction();
+    const token = await issueToken(recordId);
+    const admin = await h.loginAs('admin');
+    expect((await admin.req('POST', `/api/v1/records/${recordId}/revoke`, { body: { reason: '录入有误' } })).status).toBe(200);
+
+    const anon = h.client();
+    const r = await anon.req('GET', `/api/public/appeal/${token}/image/0`);
+    // 409 + RECORD_NOT_APPEALABLE：取图端点复用 stateToError，与 POST 提交路径同码同因
+    //（同一失效态在两条路径上必须给出同一个码，前端才能用一套映射处理）
+    expect(r.status).toBe(409);
+    expect(r.json.error.code).toBe('RECORD_NOT_APPEALABLE');
+    // 但表单仍回显摘要（附 record），教师至少知道被申诉的是哪条
+    const peek = await anon.req('GET', `/api/public/appeal/${token}`);
+    expect(peek.json.data.tokenState).toBe('not_appealable');
+    expect(peek.json.data.record.className).toBe('1班');
   });
 });
 

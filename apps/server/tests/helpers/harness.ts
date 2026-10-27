@@ -86,7 +86,7 @@ function isAddrInUse(e: unknown): boolean {
  * 随机端口（EADDRINUSE），beforeAll 抛错会导致**整个文件加载失败**（全部用例 skipped），
  * 表现为偶发的 flaky 套件。故此处对端口绑定做重试（最多 5 次，每次换端口）。
  */
-export async function boot(tag: string, opts?: { port?: number }): Promise<Harness> {
+export async function boot(tag: string, opts?: { port?: number; staticDir?: string }): Promise<Harness> {
   let port = opts?.port ?? randomPort();
   const DB = join(__dirname, `../../data/test-${tag}-${Date.now()}-${Math.floor(Math.random() * 1e6)}.db`);
   const FILES = join(__dirname, `../../data/test-files-${tag}-${Date.now()}`);
@@ -102,7 +102,11 @@ export async function boot(tag: string, opts?: { port?: number }): Promise<Harne
   process.env.LOG_LEVEL = 'error'; // 静音请求日志，保持测试输出干净
 
   const adapter = createNodeAdapter();
-  const booted = await bootstrap({ secure: false, staticDir: undefined, loginPath: '/login' });
+  // staticDir 缺省 undefined（纯 API 模式，不挂 SPA fallback）。
+  // 传入时启用静态托管 + SPA fallback —— 用于验证深链（如 /appeal/:token）能落到 index.html，
+  // 而不是吃服务端 404。免登录申诉页是教师从钉钉直接点开的**深链**，
+  // 这条路径若不通，整个需求 4 就是死的，故必须可测。
+  const booted = await bootstrap({ secure: false, staticDir: opts?.staticDir, loginPath: '/login' });
   const ac = new AbortController();
 
   // 端口冲突重试（EADDRINUSE → 换端口重试；显式指定 opts.port 时不重试，直接暴露问题）
